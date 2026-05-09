@@ -1,0 +1,105 @@
+handle: rideupgrades
+display_name: "Ride Upgrades"
+niche: car_accessories
+enabled: true
+
+persona:
+  archetype: "car enthusiast, 25-35, mod-shop-floor energy"
+  tone: "knowledgeable, gear-headed, 'you NEED this in your car' framing"
+  voice_rules:
+    - "lead with the problem the upgrade solves"
+    - "talk install difficulty in plain terms (5-min job, no tools)"
+    - "compare to OEM whenever possible"
+    - "use car-guy slang: 'OEM+', 'sleeper', 'JDM', 'daily', 'mod'"
+  banned_phrases:
+    - "amazing product"
+    - "you have to try this"
+  example_hooks:
+    - "if you daily a Civic and don't have this, you're cooked"
+    - "the $20 mod that fixes the worst part of your interior"
+    - "I've put this in 3 cars now and I'm done shopping"
+
+video_style: arcads_avatar
+post_frequency: 2
+
+monetization:
+  type: tiktok_shop_affiliate
+  commission_min: 0.12
+  commission_max: 0.22
+  link_strategy: bio_and_pinned_comment
+  affiliate_url_template: "https://www.tiktok.com/view/product/{product_id}?aff_id={affiliate_id}"
+
+hashtags:
+  evergreen:
+    - "#cars"
+    - "#carmods"
+    - "#cartok"
+    - "#fyp"
+    - "#daily"
+  exclude:
+    - "#enginerebuild"
+    - "#sponsored"
+    - "#ad"
+  max: 6
+
+scout:
+  keywords:
+    - "car accessories"
+    - "car interior upgrade"
+    - "wireless carplay adapter"
+    - "led light bar"
+    - "phone mount car"
+    - "car cleaning kit"
+    - "dash cam"
+    - "ambient lighting car"
+  exclude_keywords:
+    - "tools professional"
+    - "engine rebuild"
+  preferred_price_range_usd: [15, 120]
+
+hooks:
+  reference_accounts:
+    - "@donutmedia"
+    - "@thestradman"
+    - "@carwizard"
+  top_n_to_analyze: 30
+
+videogen:
+  arcads:
+    aspect_ratio: "9:16"
+    output_format: "mp4"
+    default_emotion: "passionate"
+    default_pacing: "natural"
+    avatar_pool:
+      - id: "AVATAR_PLACEHOLDER_010"
+        gender: "male"
+        age_range: "26-32"
+        vibe: "garage / car-meet enthusiast"
+        environment: "garage"
+      - id: "AVATAR_PLACEHOLDER_011"
+        gender: "male"
+        age_range: "28-34"
+        vibe: "driver-seat POV, talking through windshield"
+        environment: "interior driver seat"
+      - id: "AVATAR_PLACEHOLDER_012"
+        gender: "male"
+        age_range: "25-30"
+        vibe: "shop-floor, hands-on installer"
+        environment: "auto shop"
+    voice_pool:
+      - id: "VOICE_PLACEHOLDER_gearhead"
+        accent: "US neutral"
+        tone: "knowledgeable, gear-head"
+      - id: "VOICE_PLACEHOLDER_warm_us"
+        accent: "US neutral"
+        tone: "warm conversational"
+
+editor:
+  music_subdir: "car_culture"     # data/music/car_culture/*.mp3
+  caption_font: "Inter"
+
+api_credentials:
+  arcads_key_env: ARCADS_API_KEY_RIDEUPGRADES
+  tiktok_session_env: TIKTOK_SESSION_RIDEUPGRADES
+  tiktok_business_id_env: TIKTOK_BUSINESS_ID_RIDEUPGRADES
+  tiktok_shop_affiliate_id_env: TIKTOK_SHOP_AFFILIATE_ID_RIDEUPGRADES

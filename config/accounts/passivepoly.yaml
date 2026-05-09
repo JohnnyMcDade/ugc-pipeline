@@ -1,0 +1,117 @@
+handle: passivepoly
+display_name: "Passive Poly"
+niche: polymarket_whale_signals
+enabled: true
+
+persona:
+  archetype: "confident 19yo who built an AI money system"
+  tone: "calm-flex, NOT get-rich-quick. 'I built a system, here's what it caught today.'"
+  voice_rules:
+    - "frame outputs of the system, not promises"
+    - "always anchor to a real alert / real result — pulled from backend"
+    - "luxury b-roll is contextual, not the focus — the SIGNAL is the focus"
+    - "use 'my system' not 'this product'"
+    - "when sharing wins, also share losses periodically (proof = trust)"
+  banned_phrases:
+    - "guaranteed"
+    - "easy money"
+    - "passive income hack"
+    - "get rich"
+  example_hooks:
+    - "my AI flagged this whale 8 minutes before the move"
+    - "I'm 19 and I let a bot watch Polymarket for me"
+    - "today's alerts: 3 wins, 1 loss. here's what they caught"
+
+video_style: higgsfield_lifestyle  # Agent 4 routes to Higgsfield
+post_frequency: 2
+
+monetization:
+  type: subscription
+  product: "PassivePoly — Polymarket AI whale signals"
+  pricing_tiers_usd: [9.99, 19.99, 29.99]
+  platform: whop
+  cta_url: "https://passivepoly.com"
+  whop_url: "https://whop.com/passivepoly/"
+  cta_strategy: bio_and_on_screen_lower_third
+  link_strategy: bio_and_pinned_comment
+
+hashtags:
+  evergreen:
+    - "#polymarket"
+    - "#prediction"
+    - "#marketsignals"
+    - "#fintech"
+    - "#fyp"
+  exclude:
+    - "#getrichquick"
+    - "#crypto"
+    - "#sponsored"
+  max: 6
+
+# This account is unique — its "trends" come from the live backend, not Creative Center.
+scout:
+  source: passivepoly_backend
+  backend_repo: "JohnnyMcDade/polymarket-bot"
+  data_pull:
+    daily_alerts: true
+    win_loss_last_7d: true
+    biggest_whale_move_24h: true
+    notable_market_resolution: true
+  content_mix:
+    whale_alert: 0.25
+    luxury_lifestyle: 0.25
+    educational: 0.25
+    proof_results: 0.25
+
+hooks:
+  reference_accounts:
+    - "@litquidity"
+    - "@polymarketintel"
+    - "@cryptobanter"
+  top_n_to_analyze: 30
+
+videogen:
+  higgsfield:
+    aspect_ratio: "9:16"
+    default_clip_duration_seconds: 6        # higgsfield typically does 5-10s clips
+    location_anchor: "Scottsdale, Arizona"
+    visual_vocabulary:
+      - "infinity pool overlooking Camelback Mountain at golden hour"
+      - "matte black supercar parked at sunset on a desert road"
+      - "modern minimalist home office with floor-to-ceiling windows"
+      - "private aviation hangar with a small jet at dusk"
+      - "rooftop poolside cocktail with downtown Phoenix skyline behind"
+      - "mountain switchback drive through red rock at sunrise"
+      - "Mac Studio with multiple displays showing Polymarket markets"
+      - "neon-lit Phoenix downtown rooftop after rain"
+      - "saguaro silhouette against a violet desert sky"
+      - "valet at a Scottsdale resort, line of luxury cars at dusk"
+    style_refs:
+      - "cinematic"
+      - "shallow depth of field"
+      - "anamorphic lens flares (subtle)"
+      - "documentary-real, NOT stock-footage glossy"
+      - "natural color grade, low contrast"
+    camera_grammar:
+      - "slow dolly in"
+      - "static medium shot"
+      - "subtle handheld"
+      - "tracking shot following subject"
+      - "locked-off wide"
+    negative_prompt: "stock footage look, plastic skin, oversaturated, watermark, text, logo, cartoon, lowres, motion blur on subject, distorted hands, fake-looking screens"
+    category_visual_bias:
+      whale_alert:      "trading screens, real Polymarket UI, urgency without panic"
+      luxury_lifestyle: "pure flex, no UI, environment as the story"
+      educational:      "minimalist desktop, clean diagram or notebook, no clutter"
+      proof_results:    "real dashboard / Discord screenshots over b-roll"
+
+editor:
+  music_subdir: "polymarket_lofi" # data/music/polymarket_lofi/*.mp3 (calm, atmospheric)
+  caption_font: "Inter"
+
+api_credentials:
+  higgsfield_key_env: HIGGSFIELD_API_KEY
+  tiktok_session_env: TIKTOK_SESSION_PASSIVEPOLY
+  tiktok_business_id_env: TIKTOK_BUSINESS_ID_PASSIVEPOLY
+  passivepoly_backend_url_env: PASSIVEPOLY_BACKEND_URL
+  passivepoly_backend_token_env: PASSIVEPOLY_BACKEND_TOKEN

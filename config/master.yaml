@@ -1,0 +1,87 @@
+# Master config — global defaults shared by all accounts.
+# Per-account overrides live in config/accounts/*.yaml.
+
+timezone: America/New_York
+
+# Cron-style schedule. Times are in `timezone`.
+schedule:
+  scout:        "0 6 * * *"     # Agent 1
+  hooks:        "0 6 * * *"     # Agent 2 (parallel to scout)
+  scriptwriter: "0 7 * * *"
+  videoprompt:  "0 8 * * *"     # Agent 4
+  videogen:     "5 8 * * *"     # Agent 5 (slight stagger)
+  editor:       "0 10 * * *"
+  publisher_1:  "0 12 * * *"
+  publisher_2:  "0 18 * * *"
+  monitor:      "0 23 * * *"
+
+# Model selection. Update here, propagates to all agents.
+models:
+  claude:
+    primary: claude-opus-4-7
+    fast:    claude-sonnet-4-6
+    cheap:   claude-haiku-4-5-20251001
+
+# Defaults for trend scout — accounts can override.
+scout:
+  creative_center:
+    region: US
+    period_days: 7              # window for trending products
+    min_post_count: 50          # ignore products with too little signal
+  scoring:
+    weights:
+      velocity: 0.35            # how fast volume is climbing
+      relevance: 0.30           # niche match
+      commission: 0.20          # affiliate payout (n/a for passivepoly)
+      saturation_penalty: 0.15  # penalize already-saturated products
+    min_score: 0.55             # below this → reject
+  output_top_n: 10
+
+# Defaults for the script writer (Agent 3)
+scriptwriter:
+  variants_per_account: 4         # how many distinct scripts to generate per run
+  target_duration_seconds:
+    arcads_avatar: 30             # accounts 1, 2
+    higgsfield_lifestyle: 22      # account 3
+  duration_tolerance_seconds: 6   # +/- vs target before validation flags it
+  words_per_minute: 150           # used to estimate spoken duration
+  max_hashtags: 6
+  drop_invalid: true              # if false, invalid scripts are kept w/ passed=false
+
+# Defaults for video generation budget controls
+videogen:
+  max_videos_per_account_per_day: 4
+  max_retries: 2
+  poll_interval_seconds: 30
+  poll_timeout_seconds: 1200
+
+# Defaults for editor
+editor:
+  resolution: "1080x1920"       # 9:16
+  caption_font: "Inter-Bold"
+  caption_size: 72
+  music_volume_db: -18
+
+# Performance monitor (Agent 8)
+monitor:
+  lookback_days: 7              # how far back to pull analytics each run
+  winner_thresholds:
+    min_engagement_rate: 0.05   # ER floor for winner consideration
+    min_view_count: 50000       # noise filter
+    take_top_n: 8               # Agent 2 reads up to this many tomorrow
+  loser_thresholds:
+    max_engagement_rate: 0.02
+    min_age_hours: 24           # don't judge a video before it's settled
+    min_view_floor: 1000        # if even tiny views, don't kill — ad/no-distribution issue
+  kill_thresholds:
+    consecutive_uses_to_kill_pattern: 3
+    consecutive_uses_to_kill_product: 3
+  report:
+    write_markdown: true
+    write_global_summary: true
+
+# Logging
+logging:
+  level: INFO
+  format: json
+  retain_days: 30

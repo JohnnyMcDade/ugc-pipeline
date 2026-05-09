@@ -1,0 +1,32 @@
+# --- secrets ---
+.env
+.env.local
+
+# --- python ---
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+
+# --- IDE / OS ---
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# --- pipeline runtime data (never commit user content / generated media) ---
+data/logs/
+data/trends/
+data/scripts/
+data/hooks/
+data/video_prompts/
+data/raw_videos/
+data/final_videos/
+data/published_log/
+data/analytics/
+data/music/
+data/assets/
