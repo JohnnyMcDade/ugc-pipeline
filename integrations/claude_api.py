@@ -38,26 +38,33 @@ class ClaudeClient:
         system: str,
         user: str,
         max_tokens: int = 4096,
-        temperature: float = 0.2,
+        temperature: float | None = None,
     ) -> dict[str, Any]:
         """Call Claude, expect JSON, return parsed dict.
 
         The `system` block is sent with cache_control so repeated calls in the
         same batch (e.g. scoring 30 products one-by-one) reuse the cache.
+
+        `temperature` is opt-in: newer Anthropic models (Opus 4.5+) reject
+        the parameter with `temperature is deprecated for this model`. Default
+        of None means "let the model use its own default," which works
+        across every current model.
         """
-        resp = self.client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            system=[
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": [
                 {
                     "type": "text",
                     "text": system,
                     "cache_control": {"type": "ephemeral"},
                 }
             ],
-            messages=[{"role": "user", "content": user}],
-        )
+            "messages": [{"role": "user", "content": user}],
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        resp = self.client.messages.create(**kwargs)
         text = "".join(
             block.text for block in resp.content if getattr(block, "type", None) == "text"
         ).strip()
