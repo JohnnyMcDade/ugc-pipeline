@@ -101,10 +101,10 @@ videogen:
         avatar_style: "normal"
         vibe: "casual front, friendly explainer for educational beats"
     voice_pool:
-      - voice_id: "VOICE_PLACEHOLDER_passivepoly_calm"
-        tone: "calm, slightly raspy, NOT hype-bro"
-      - voice_id: "VOICE_PLACEHOLDER_passivepoly_clear"
-        tone: "clear measured young-male"
+      # Baritone Ben — male English, deepest of the five 'Ben' voice options.
+      # Calm, low register suits the calm-flex 19yo persona.
+      - voice_id: "69ab9617a561446992605c2c7924aacb"
+        tone: "Baritone Ben — male English, deep / calm register"
 
 editor:
   music_subdir: "polymarket_lofi" # data/music/polymarket_lofi/*.mp3 (calm, atmospheric)

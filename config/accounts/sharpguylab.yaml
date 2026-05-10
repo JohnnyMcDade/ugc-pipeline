@@ -90,10 +90,10 @@ videogen:
         avatar_style: "normal"
         vibe: "casual front, friendly approachable"
     voice_pool:
-      - voice_id: "VOICE_PLACEHOLDER_warm_us"
-        tone: "warm conversational"
-      - voice_id: "VOICE_PLACEHOLDER_smooth_us"
-        tone: "smooth confident"
+      # Callahan — male English. Single voice = all variants use the same VO
+      # (rotation only happens across the avatar_pool).
+      - voice_id: "3ea8b0a942c44f23bc70653495718682"
+        tone: "Callahan — male English, conversational"
 
 editor:
   music_subdir: "mens_grooming"   # data/music/mens_grooming/*.mp3

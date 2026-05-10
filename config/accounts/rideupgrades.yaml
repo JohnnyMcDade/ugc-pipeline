@@ -89,10 +89,10 @@ videogen:
         avatar_style: "normal"
         vibe: "jacket front, slightly older mechanic vibe"
     voice_pool:
-      - voice_id: "VOICE_PLACEHOLDER_gearhead"
-        tone: "knowledgeable, gear-head"
-      - voice_id: "VOICE_PLACEHOLDER_warm_us"
-        tone: "warm conversational"
+      # Mature Morgan — male English. (No 'Morgan Relaxing' in the catalog; this
+      # is the closest male match — the only Mature Morgan male voice option.)
+      - voice_id: "e31e9614d31d4678be3377da14d99d3b"
+        tone: "Mature Morgan — male English, measured / authoritative"
 
 editor:
   music_subdir: "car_culture"     # data/music/car_culture/*.mp3
