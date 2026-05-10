@@ -85,15 +85,21 @@ videogen:
       type: "color"
       value: "#0d1117"   # near-black, lets a Discord-card overlay read clearly
     avatar_pool:
-      - avatar_id: "AVATAR_PLACEHOLDER_PASSIVEPOLY_01"
+      # PRIMARY — August Hoodies Front 2. Hoodie + front framing nails the
+      # college-genius / calm-flex 19yo read.
+      - avatar_id: "August_Hoodies_Front2_public"
         avatar_style: "normal"
-        vibe: "calm-flex 19yo, casual hoodie/tee, monitors-behind"
-      - avatar_id: "AVATAR_PLACEHOLDER_PASSIVEPOLY_02"
+        vibe: "hoodie front, calm-flex 19yo, college-genius read"
+      # BACKUP — Brandon Sofa Sitting Front. Home-office sitting framing,
+      # reads as "kid running it from his bedroom" — dorm/home-office vibe.
+      - avatar_id: "Brandon_Sofa_Sitting_Front_public"
         avatar_style: "closeUp"
-        vibe: "same persona, tighter framing for direct-to-camera"
-      - avatar_id: "AVATAR_PLACEHOLDER_PASSIVEPOLY_03"
+        vibe: "sofa sitting, home-office calm, direct-to-camera"
+      # BACKUP — Armando Casual Front. Slightly older read; use for
+      # educational-beat variants where a touch of authority helps.
+      - avatar_id: "Armando_Casual_Front_public"
         avatar_style: "normal"
-        vibe: "same persona, slightly older read for educational beats"
+        vibe: "casual front, friendly explainer for educational beats"
     voice_pool:
       - voice_id: "VOICE_PLACEHOLDER_passivepoly_calm"
         tone: "calm, slightly raspy, NOT hype-bro"

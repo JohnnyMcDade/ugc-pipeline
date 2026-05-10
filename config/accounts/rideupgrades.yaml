@@ -74,15 +74,20 @@ videogen:
       type: "color"
       value: "#0d0d0d"
     avatar_pool:
-      - avatar_id: "AVATAR_PLACEHOLDER_RIDE_01"
+      # PRIMARY — Byron Jacket Front. Jacket = outerwear / authentic edge,
+      # reads "actually works on cars" not "studio host."
+      - avatar_id: "Byron_Jacket_Front_public"
         avatar_style: "normal"
-        vibe: "garage / car-meet enthusiast, 26-32"
-      - avatar_id: "AVATAR_PLACEHOLDER_RIDE_02"
+        vibe: "jacket / outerwear edge, 26-32, hands-on car-guy energy"
+      # BACKUP — Colin Jacket Front. Same wardrobe direction, different actor.
+      - avatar_id: "Colin_Jacket_Front_public"
         avatar_style: "closeUp"
-        vibe: "driver-seat POV vibe, 28-34"
-      - avatar_id: "AVATAR_PLACEHOLDER_RIDE_03"
+        vibe: "jacket front, authentic shop-floor read"
+      # BACKUP — Diran Jacket Front. Third jacket option for variety on the
+      # variant_index rotation.
+      - avatar_id: "Diran_Jacket_Front_public"
         avatar_style: "normal"
-        vibe: "shop-floor / hands-on installer, 25-30"
+        vibe: "jacket front, slightly older mechanic vibe"
     voice_pool:
       - voice_id: "VOICE_PLACEHOLDER_gearhead"
         tone: "knowledgeable, gear-head"

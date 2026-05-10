@@ -75,15 +75,20 @@ videogen:
       type: "color"
       value: "#1a1a1a"
     avatar_pool:
-      - avatar_id: "AVATAR_PLACEHOLDER_SHARPGUY_01"
+      # PRIMARY — Leszek Outdoor Casual Front. Outdoor + casual, dynamic standing
+      # framing. Reads as "active lifestyle / dating-confident" — fits the
+      # gym-bro persona without being too gym-specific.
+      - avatar_id: "Leszek_standing_outdoorcasual_front"
         avatar_style: "normal"
-        vibe: "casual gym-bro, 22-28"
-      - avatar_id: "AVATAR_PLACEHOLDER_SHARPGUY_02"
+        vibe: "outdoor casual, 22-28, dating-confident energy"
+      # BACKUP — Aditya in Blue T-shirt. Clean t-shirt, athletic-leaning read.
+      - avatar_id: "Aditya_public_2"
         avatar_style: "closeUp"
-        vibe: "confident outdoor, 25-30"
-      - avatar_id: "AVATAR_PLACEHOLDER_SHARPGUY_03"
+        vibe: "blue t-shirt, athletic-leaning, gym-adjacent"
+      # BACKUP — Armando Casual Front. Pure casual, friendly read.
+      - avatar_id: "Armando_Casual_Front_public"
         avatar_style: "normal"
-        vibe: "post-workout / locker-room energy"
+        vibe: "casual front, friendly approachable"
     voice_pool:
       - voice_id: "VOICE_PLACEHOLDER_warm_us"
         tone: "warm conversational"
