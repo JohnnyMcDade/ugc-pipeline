@@ -80,7 +80,7 @@ videogen:
     dimension: { width: 1080, height: 1920 }
     default_avatar_style: "normal"
     default_pacing: "natural"
-    test: false
+    test: true                         # HeyGen test mode (watermark, no credit charge) — flip to false after first verified run
     background:
       type: "color"
       value: "#0d1117"   # near-black, lets a Discord-card overlay read clearly

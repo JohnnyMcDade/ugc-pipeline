@@ -70,7 +70,7 @@ videogen:
     dimension: { width: 1080, height: 1920 }
     default_avatar_style: "normal"     # normal | circle | closeUp
     default_pacing: "natural"          # slow | natural | fast → maps to voice.speed
-    test: false                        # set true to bypass credit usage during dev
+    test: true                         # HeyGen test mode (watermark, no credit charge) — flip to false after first verified run
     background:
       type: "color"
       value: "#1a1a1a"

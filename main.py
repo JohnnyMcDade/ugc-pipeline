@@ -61,7 +61,9 @@ def build_scheduler(pipeline: PipelineConfig) -> Scheduler:
 
 
 def run_forever() -> None:
-    load_dotenv()
+    # override=True so a shell-exported empty placeholder (e.g.
+    # ANTHROPIC_API_KEY="") doesn't silently shadow the real value in .env.
+    load_dotenv(override=True)
     pipeline = load_pipeline(CONFIG_ROOT)
     log = get_logger("main")
     log.info(
@@ -73,7 +75,9 @@ def run_forever() -> None:
 
 
 def run_once(slot: str, only_handle: str | None) -> None:
-    load_dotenv()
+    # override=True so a shell-exported empty placeholder (e.g.
+    # ANTHROPIC_API_KEY="") doesn't silently shadow the real value in .env.
+    load_dotenv(override=True)
     pipeline = load_pipeline(CONFIG_ROOT)
     log = get_logger("main")
 

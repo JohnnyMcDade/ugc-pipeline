@@ -200,6 +200,7 @@ def run(account: AccountConfig, ctx: dict[str, Any]) -> dict[str, Any]:
 
     finalized: list[dict[str, Any]] = []
     dropped = 0
+    drop_reasons: list[dict[str, Any]] = []
     for v in raw_variants:
         issues = validate_script(
             script=v,
@@ -217,8 +218,30 @@ def run(account: AccountConfig, ctx: dict[str, Any]) -> dict[str, Any]:
         v["video_style"] = account.video_style
         v["validation"] = {"passed": not issues, "issues": issues}
         if issues and drop_invalid:
-            log.info("dropped invalid variant",
-                     extra={"variant_index": v.get("variant_index"), "issues": issues})
+            # WARNING-level so it surfaces in tail-style log review.
+            # `issues` flattened into the message so it's readable without a
+            # JSON parser; also kept structured in `extra` for downstream
+            # log indexers.
+            hook_preview = (v.get("hook") or "")[:60]
+            log.warning(
+                f"dropped variant {v.get('variant_index')}: {'; '.join(issues)}",
+                extra={
+                    "variant_index": v.get("variant_index"),
+                    "issues": issues,
+                    "source_pattern_id": v.get("source_pattern_id"),
+                    "source_product_id": v.get("source_product_id"),
+                    "source_signal_id": v.get("source_signal_id"),
+                    "hook_preview": hook_preview,
+                },
+            )
+            drop_reasons.append({
+                "variant_index": v.get("variant_index"),
+                "issues": issues,
+                "source_pattern_id": v.get("source_pattern_id"),
+                "source_product_id": v.get("source_product_id"),
+                "source_signal_id": v.get("source_signal_id"),
+                "hook_preview": hook_preview,
+            })
             dropped += 1
             continue
         finalized.append(v)
@@ -230,6 +253,7 @@ def run(account: AccountConfig, ctx: dict[str, Any]) -> dict[str, Any]:
             "dropped": dropped,
             "fallback_patterns": fallback_used,
             "trend_kind": kind,
+            "drop_reasons": drop_reasons,
         },
     )
 
@@ -242,6 +266,7 @@ def run(account: AccountConfig, ctx: dict[str, Any]) -> dict[str, Any]:
         "target_duration_seconds": target,
         "scripts": finalized,
         "dropped_count": dropped,
+        "drop_reasons": drop_reasons,
     }
     out_path = out_dir / "scripts.json"
     out_path.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
