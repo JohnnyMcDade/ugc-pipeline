@@ -20,7 +20,7 @@ persona:
     - "guys, I cracked the dating cologne thing"
     - "stop using your roommate's body wash"
 
-video_style: arcads_avatar      # Agent 4 routes to Arcads
+video_style: heygen_avatar      # Agent 4 routes to HeyGen
 post_frequency: 2
 
 monetization:
@@ -64,34 +64,30 @@ hooks:
   top_n_to_analyze: 30
 
 videogen:
-  arcads:
-    aspect_ratio: "9:16"
-    output_format: "mp4"
-    default_emotion: "confident"
-    default_pacing: "natural"
+  heygen:
+    # Replace ids with real ones from HeyGen's /v2/avatars and /v2/voices.
+    # See developers.heygen.com — your account's available list is in the dashboard.
+    dimension: { width: 1080, height: 1920 }
+    default_avatar_style: "normal"     # normal | circle | closeUp
+    default_pacing: "natural"          # slow | natural | fast → maps to voice.speed
+    test: false                        # set true to bypass credit usage during dev
+    background:
+      type: "color"
+      value: "#1a1a1a"
     avatar_pool:
-      # Replace ids with real Arcads avatar ids from /v1/avatars endpoint.
-      - id: "AVATAR_PLACEHOLDER_001"
-        gender: "male"
-        age_range: "22-28"
-        vibe: "casual gym-bro, bathroom mirror"
-        environment: "bathroom"
-      - id: "AVATAR_PLACEHOLDER_002"
-        gender: "male"
-        age_range: "25-30"
-        vibe: "confident outdoor, casual fits"
-        environment: "outdoor casual"
-      - id: "AVATAR_PLACEHOLDER_003"
-        gender: "male"
-        age_range: "23-27"
-        vibe: "gym locker room, post-workout"
-        environment: "gym"
+      - avatar_id: "AVATAR_PLACEHOLDER_SHARPGUY_01"
+        avatar_style: "normal"
+        vibe: "casual gym-bro, 22-28"
+      - avatar_id: "AVATAR_PLACEHOLDER_SHARPGUY_02"
+        avatar_style: "closeUp"
+        vibe: "confident outdoor, 25-30"
+      - avatar_id: "AVATAR_PLACEHOLDER_SHARPGUY_03"
+        avatar_style: "normal"
+        vibe: "post-workout / locker-room energy"
     voice_pool:
-      - id: "VOICE_PLACEHOLDER_warm_us"
-        accent: "US neutral"
+      - voice_id: "VOICE_PLACEHOLDER_warm_us"
         tone: "warm conversational"
-      - id: "VOICE_PLACEHOLDER_smooth_us"
-        accent: "US neutral"
+      - voice_id: "VOICE_PLACEHOLDER_smooth_us"
         tone: "smooth confident"
 
 editor:
@@ -99,7 +95,8 @@ editor:
   caption_font: "Inter"
 
 api_credentials:
-  arcads_key_env: ARCADS_API_KEY_SHARPGUYLAB
+  # HeyGen API key is org-level (one for all 3 accounts), env var = HEYGEN_API_KEY.
+  # The videogen agent reads it directly from os.environ — not via this block.
   tiktok_session_env: TIKTOK_SESSION_SHARPGUYLAB
   tiktok_business_id_env: TIKTOK_BUSINESS_ID_SHARPGUYLAB
   tiktok_shop_affiliate_id_env: TIKTOK_SHOP_AFFILIATE_ID_SHARPGUYLAB

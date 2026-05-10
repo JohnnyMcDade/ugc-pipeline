@@ -22,7 +22,7 @@ persona:
     - "I'm 19 and I let a bot watch Polymarket for me"
     - "today's alerts: 3 wins, 1 loss. here's what they caught"
 
-video_style: higgsfield_lifestyle  # Agent 4 routes to Higgsfield
+video_style: heygen_avatar         # Agent 4 routes to HeyGen
 post_frequency: 2
 
 monetization:
@@ -71,46 +71,41 @@ hooks:
   top_n_to_analyze: 30
 
 videogen:
-  higgsfield:
-    aspect_ratio: "9:16"
-    default_clip_duration_seconds: 6        # higgsfield typically does 5-10s clips
-    location_anchor: "Scottsdale, Arizona"
-    visual_vocabulary:
-      - "infinity pool overlooking Camelback Mountain at golden hour"
-      - "matte black supercar parked at sunset on a desert road"
-      - "modern minimalist home office with floor-to-ceiling windows"
-      - "private aviation hangar with a small jet at dusk"
-      - "rooftop poolside cocktail with downtown Phoenix skyline behind"
-      - "mountain switchback drive through red rock at sunrise"
-      - "Mac Studio with multiple displays showing Polymarket markets"
-      - "neon-lit Phoenix downtown rooftop after rain"
-      - "saguaro silhouette against a violet desert sky"
-      - "valet at a Scottsdale resort, line of luxury cars at dusk"
-    style_refs:
-      - "cinematic"
-      - "shallow depth of field"
-      - "anamorphic lens flares (subtle)"
-      - "documentary-real, NOT stock-footage glossy"
-      - "natural color grade, low contrast"
-    camera_grammar:
-      - "slow dolly in"
-      - "static medium shot"
-      - "subtle handheld"
-      - "tracking shot following subject"
-      - "locked-off wide"
-    negative_prompt: "stock footage look, plastic skin, oversaturated, watermark, text, logo, cartoon, lowres, motion blur on subject, distorted hands, fake-looking screens"
-    category_visual_bias:
-      whale_alert:      "trading screens, real Polymarket UI, urgency without panic"
-      luxury_lifestyle: "pure flex, no UI, environment as the story"
-      educational:      "minimalist desktop, clean diagram or notebook, no clutter"
-      proof_results:    "real dashboard / Discord screenshots over b-roll"
+  heygen:
+    # All 3 accounts use HeyGen now; passivepoly is a talking-head avatar
+    # account, not b-roll. The "Arizona / luxury / desert" aesthetic is
+    # gone — pick an avatar/voice that embodies the calm-flex 19yo persona
+    # instead. Background is dark/neutral so the Discord evidence screenshot
+    # the editor composites pops cleanly.
+    dimension: { width: 1080, height: 1920 }
+    default_avatar_style: "normal"
+    default_pacing: "natural"
+    test: false
+    background:
+      type: "color"
+      value: "#0d1117"   # near-black, lets a Discord-card overlay read clearly
+    avatar_pool:
+      - avatar_id: "AVATAR_PLACEHOLDER_PASSIVEPOLY_01"
+        avatar_style: "normal"
+        vibe: "calm-flex 19yo, casual hoodie/tee, monitors-behind"
+      - avatar_id: "AVATAR_PLACEHOLDER_PASSIVEPOLY_02"
+        avatar_style: "closeUp"
+        vibe: "same persona, tighter framing for direct-to-camera"
+      - avatar_id: "AVATAR_PLACEHOLDER_PASSIVEPOLY_03"
+        avatar_style: "normal"
+        vibe: "same persona, slightly older read for educational beats"
+    voice_pool:
+      - voice_id: "VOICE_PLACEHOLDER_passivepoly_calm"
+        tone: "calm, slightly raspy, NOT hype-bro"
+      - voice_id: "VOICE_PLACEHOLDER_passivepoly_clear"
+        tone: "clear measured young-male"
 
 editor:
   music_subdir: "polymarket_lofi" # data/music/polymarket_lofi/*.mp3 (calm, atmospheric)
   caption_font: "Inter"
 
 api_credentials:
-  higgsfield_key_env: HIGGSFIELD_API_KEY
+  # HeyGen API key is org-level — env var HEYGEN_API_KEY (read directly).
   tiktok_session_env: TIKTOK_SESSION_PASSIVEPOLY
   tiktok_business_id_env: TIKTOK_BUSINESS_ID_PASSIVEPOLY
   passivepoly_backend_url_env: PASSIVEPOLY_BACKEND_URL

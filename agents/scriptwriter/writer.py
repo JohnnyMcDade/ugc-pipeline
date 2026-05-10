@@ -4,9 +4,11 @@ Reads today's scout output + today's hook patterns for an account, asks Claude
 to write N persona-locked script variants in one batch, then validates each
 one locally for banned phrases, duration, provenance, and CTA identity.
 
-Branches on account.video_style:
-  arcads_avatar         → affiliate prompt path, products as the trend source
-  higgsfield_lifestyle  → passivepoly prompt path, signals as the trend source
+All accounts now produce talking-head avatar UGC (HeyGen). Branches on
+account.monetization.type, not video_style:
+
+  tiktok_shop_affiliate → SCRIPT_SYSTEM_AFFILIATE  (sharpguylab, rideupgrades)
+  subscription          → SCRIPT_SYSTEM_PASSIVEPOLY (passivepoly)
 
 Output: data/scripts/<handle>/<YYYY-MM-DD>/scripts.json
 """
@@ -142,7 +144,11 @@ def run(account: AccountConfig, ctx: dict[str, Any]) -> dict[str, Any]:
     claude = ClaudeClient()
     model = master.models["claude"]["primary"]  # quality matters more than cost here
 
-    if account.video_style == "arcads_avatar":
+    # All accounts now produce talking-head avatar UGC via HeyGen. The two
+    # prompt families differ only by monetization: TikTok Shop affiliate vs.
+    # subscription (passivepoly). Branch on monetization.type, not video_style.
+    monetization_type = (account.monetization or {}).get("type", "")
+    if monetization_type == "tiktok_shop_affiliate":
         raw = claude.complete_json(
             model=model,
             system=SCRIPT_SYSTEM_AFFILIATE,
@@ -159,7 +165,7 @@ def run(account: AccountConfig, ctx: dict[str, Any]) -> dict[str, Any]:
             ),
         )
         cta_url_required = None
-    elif account.video_style == "higgsfield_lifestyle":
+    elif monetization_type == "subscription":
         raw = claude.complete_json(
             model=model,
             system=SCRIPT_SYSTEM_PASSIVEPOLY,
@@ -176,7 +182,7 @@ def run(account: AccountConfig, ctx: dict[str, Any]) -> dict[str, Any]:
         )
         cta_url_required = account.monetization.get("cta_url", "https://passivepoly.com")
     else:
-        raise RuntimeError(f"unknown video_style: {account.video_style}")
+        raise RuntimeError(f"unknown monetization.type: {monetization_type!r}")
 
     raw_variants = list(raw.get("variants", []))
 

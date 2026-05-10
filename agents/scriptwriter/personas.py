@@ -34,9 +34,10 @@ def contains_banned(text: str, banned: list[str]) -> list[str]:
     return [b for b in banned if b.lower() in lower]
 
 
-def _all_text_fields(script: dict[str, Any], style: str) -> list[str]:
-    """Every text surface a viewer or model could see — caption, voiceover,
-    overlays. Used to scan for banned phrases everywhere, not just the VO.
+def _all_text_fields(script: dict[str, Any]) -> list[str]:
+    """Every text surface a viewer or model could see. The script schema is
+    unified now (all accounts produce avatar UGC via HeyGen), so the same
+    field set applies regardless of style.
     """
     out: list[str] = []
     if script.get("voiceover_text"):
@@ -48,22 +49,22 @@ def _all_text_fields(script: dict[str, Any], style: str) -> list[str]:
     for beat in script.get("body_beats", []) or []:
         if beat.get("text"):
             out.append(beat["text"])
-    if style == "higgsfield_lifestyle":
-        for o in script.get("on_screen_overlays", []) or []:
-            if o.get("text"):
-                out.append(o["text"])
+    # passivepoly: evidence_payload.headline shows up burned into the screenshot.
+    headline = (script.get("evidence_payload") or {}).get("headline")
+    if headline:
+        out.append(headline)
     return out
 
 
-def _required_fields(style: str) -> list[str]:
-    common = ["variant_index", "source_pattern_id", "voiceover_text", "caption", "hashtags"]
-    if style == "arcads_avatar":
-        return common + ["source_product_id", "hook", "body_beats", "target_duration_seconds"]
-    if style == "higgsfield_lifestyle":
-        return common + [
-            "source_signal_id", "category", "broll_concept",
-            "on_screen_overlays", "cta_url", "target_duration_seconds",
-        ]
+def _required_fields(monetization_type: str) -> list[str]:
+    common = [
+        "variant_index", "source_pattern_id", "voiceover_text", "caption", "hashtags",
+        "hook", "body_beats", "target_duration_seconds",
+    ]
+    if monetization_type == "tiktok_shop_affiliate":
+        return common + ["source_product_id"]
+    if monetization_type == "subscription":
+        return common + ["category", "cta_url"]   # source_signal_id may be null for educational
     return common
 
 
@@ -79,16 +80,16 @@ def validate_script(
     cta_url_required: str | None = None,
 ) -> list[str]:
     issues: list[str] = []
-    style = account.video_style
+    monetization_type = (account.monetization or {}).get("type", "")
 
     # 1. Required fields.
-    for f in _required_fields(style):
+    for f in _required_fields(monetization_type):
         if f not in script or script[f] in (None, "", []):
             issues.append(f"missing field: {f}")
 
     # 2. Banned phrases anywhere a viewer or system reads the text.
     banned = list(account.persona.get("banned_phrases", []))
-    for surface in _all_text_fields(script, style):
+    for surface in _all_text_fields(script):
         hits = contains_banned(surface, banned)
         if hits:
             issues.append(f"banned phrase(s) present: {sorted(set(hits))}")
@@ -97,10 +98,10 @@ def validate_script(
     # 3. Provenance: pattern + source ids must be ones we provided.
     if "source_pattern_id" in script and script["source_pattern_id"] not in valid_pattern_ids:
         issues.append(f"unknown source_pattern_id: {script['source_pattern_id']!r}")
-    if style == "arcads_avatar":
+    if monetization_type == "tiktok_shop_affiliate":
         if script.get("source_product_id") not in valid_source_ids:
             issues.append(f"unknown source_product_id: {script.get('source_product_id')!r}")
-    elif style == "higgsfield_lifestyle":
+    elif monetization_type == "subscription":
         sig = script.get("source_signal_id")
         # `null` is allowed for the educational category — concept-only videos
         # don't anchor to a specific live event.

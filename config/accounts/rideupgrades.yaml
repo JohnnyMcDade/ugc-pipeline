@@ -19,7 +19,7 @@ persona:
     - "the $20 mod that fixes the worst part of your interior"
     - "I've put this in 3 cars now and I'm done shopping"
 
-video_style: arcads_avatar
+video_style: heygen_avatar
 post_frequency: 2
 
 monetization:
@@ -65,33 +65,28 @@ hooks:
   top_n_to_analyze: 30
 
 videogen:
-  arcads:
-    aspect_ratio: "9:16"
-    output_format: "mp4"
-    default_emotion: "passionate"
+  heygen:
+    dimension: { width: 1080, height: 1920 }
+    default_avatar_style: "normal"
     default_pacing: "natural"
+    test: false
+    background:
+      type: "color"
+      value: "#0d0d0d"
     avatar_pool:
-      - id: "AVATAR_PLACEHOLDER_010"
-        gender: "male"
-        age_range: "26-32"
-        vibe: "garage / car-meet enthusiast"
-        environment: "garage"
-      - id: "AVATAR_PLACEHOLDER_011"
-        gender: "male"
-        age_range: "28-34"
-        vibe: "driver-seat POV, talking through windshield"
-        environment: "interior driver seat"
-      - id: "AVATAR_PLACEHOLDER_012"
-        gender: "male"
-        age_range: "25-30"
-        vibe: "shop-floor, hands-on installer"
-        environment: "auto shop"
+      - avatar_id: "AVATAR_PLACEHOLDER_RIDE_01"
+        avatar_style: "normal"
+        vibe: "garage / car-meet enthusiast, 26-32"
+      - avatar_id: "AVATAR_PLACEHOLDER_RIDE_02"
+        avatar_style: "closeUp"
+        vibe: "driver-seat POV vibe, 28-34"
+      - avatar_id: "AVATAR_PLACEHOLDER_RIDE_03"
+        avatar_style: "normal"
+        vibe: "shop-floor / hands-on installer, 25-30"
     voice_pool:
-      - id: "VOICE_PLACEHOLDER_gearhead"
-        accent: "US neutral"
+      - voice_id: "VOICE_PLACEHOLDER_gearhead"
         tone: "knowledgeable, gear-head"
-      - id: "VOICE_PLACEHOLDER_warm_us"
-        accent: "US neutral"
+      - voice_id: "VOICE_PLACEHOLDER_warm_us"
         tone: "warm conversational"
 
 editor:
@@ -99,7 +94,7 @@ editor:
   caption_font: "Inter"
 
 api_credentials:
-  arcads_key_env: ARCADS_API_KEY_RIDEUPGRADES
+  # HeyGen API key is org-level — env var HEYGEN_API_KEY (read directly).
   tiktok_session_env: TIKTOK_SESSION_RIDEUPGRADES
   tiktok_business_id_env: TIKTOK_BUSINESS_ID_RIDEUPGRADES
   tiktok_shop_affiliate_id_env: TIKTOK_SHOP_AFFILIATE_ID_RIDEUPGRADES

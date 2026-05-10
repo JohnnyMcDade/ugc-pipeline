@@ -41,8 +41,7 @@ scout:
 scriptwriter:
   variants_per_account: 4         # how many distinct scripts to generate per run
   target_duration_seconds:
-    arcads_avatar: 30             # accounts 1, 2
-    higgsfield_lifestyle: 22      # account 3
+    heygen_avatar: 30             # all 3 accounts (talking-head)
   duration_tolerance_seconds: 6   # +/- vs target before validation flags it
   words_per_minute: 150           # used to estimate spoken duration
   max_hashtags: 6
