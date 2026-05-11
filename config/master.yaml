@@ -14,6 +14,9 @@ schedule:
   publisher_1:  "0 12 * * *"
   publisher_2:  "0 18 * * *"
   monitor:      "0 23 * * *"
+  music_scout:  "0 5 * * 0"     # Agent 9 — weekly Sunday 5 AM
+  health_check: "*/15 * * * *"  # Agent 10 — every 15 minutes
+  health_report:"0 7 * * *"     # Agent 10 — daily 7 AM
 
 # Model selection. Update here, propagates to all agents.
 models:
@@ -60,6 +63,32 @@ editor:
   caption_font: "Inter-Bold"
   caption_size: 72
   music_volume_db: -18
+
+# Music scout (Agent 9)
+music_scout:
+  default_top_n_to_keep: 20      # per-account override in account YAML
+
+# Self-repair monitor (Agent 10)
+health:
+  check_interval_minutes: 15     # informational; cron source of truth is `schedule.health_check`
+  agent_staleness_minutes:       # how stale "today's output is missing" gets before alerting
+    scout: 90
+    hooks: 90
+    scriptwriter: 90
+    videoprompt: 90
+    videogen: 120                # HeyGen can take a while
+    editor: 90
+    publisher_1: 60
+    publisher_2: 60
+    monitor: 60
+  auto_repair:
+    max_retries: 3
+    base_backoff_seconds: 30     # backoff = base * 2 ** attempt
+    disk_low_threshold_gb: 5
+    raw_video_retention_days: 7
+  alert:
+    only_after_attempts: 3       # only ping Discord if auto-repair fails this many times
+    daily_report_includes_open_issues: true
 
 # Performance monitor (Agent 8)
 monitor:

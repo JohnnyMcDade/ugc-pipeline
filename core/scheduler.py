@@ -64,6 +64,32 @@ class Scheduler:
                 extra={"slot": slot, "agent": agent_name, "account": account.handle, "cron": cron_expr},
             )
 
+    def register_global(self, slot: str, agent_name: str, fn) -> None:
+        """Like `register` but the job fires ONCE per cron tick (not per
+        account). The function signature is (pipeline, ctx) instead of
+        (account, ctx). Used for cross-account agents like the health
+        monitor and daily report.
+        """
+        cron_expr = self.pipeline.master.schedule.get(slot)
+        if not cron_expr:
+            self.log.warning("no schedule for global slot, skipping", extra={"slot": slot})
+            return
+        trigger = CronTrigger.from_crontab(cron_expr, timezone=self.pipeline.master.timezone)
+        self.sched.add_job(
+            fn,
+            trigger=trigger,
+            args=[self.pipeline, {"slot": slot}],
+            id=slot,
+            name=f"{agent_name} (global)",
+            misfire_grace_time=600,
+            coalesce=True,
+            max_instances=1,
+        )
+        self.log.info(
+            "registered global job",
+            extra={"slot": slot, "agent": agent_name, "cron": cron_expr},
+        )
+
     def run_forever(self) -> None:
         self.log.info(
             "scheduler starting",

@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agents.music_scout.scout import log_music_use, pick_music_id_for_video
 from agents.publisher import affiliate_linker, hashtag_gen
 from agents.publisher.scheduler import PUBLISHED_LOG_ROOT, pick_video
 from core.config_loader import AccountConfig
@@ -138,6 +139,23 @@ def run(account: AccountConfig, ctx: dict[str, Any]) -> dict[str, Any]:
     # 3. Caption.
     caption = _build_caption(script, hashtags_final, plan.in_caption_appendix)
 
+    # 3b. Music ID from Agent 9's catalog. Attaching a music_id at upload
+    # time is what gives the video TikTok's trending-sound boost — baking
+    # the audio into the mp4 via ffmpeg does not.
+    music_track = pick_music_id_for_video(account)
+    music_id = (music_track or {}).get("music_id")
+    if music_track:
+        log.info(
+            "music_id selected",
+            extra={
+                "music_id": music_id,
+                "title": music_track.get("title"),
+                "trending_score": music_track.get("trending_score"),
+            },
+        )
+    else:
+        log.info("no music_id available — TikTok will use the video's baked audio")
+
     # 4. Upload + publish.
     creds = account.raw.get("api_credentials") or {}
     client = TikTokPublishClient(access_token=creds.get("tiktok_session", ""))
@@ -156,6 +174,11 @@ def run(account: AccountConfig, ctx: dict[str, Any]) -> dict[str, Any]:
             "pinned_comment_text": plan.pinned_comment_text,
             "metadata": plan.metadata,
         },
+        "music": {
+            "music_id": music_id,
+            "title": (music_track or {}).get("title"),
+            "trending_score": (music_track or {}).get("trending_score"),
+        } if music_track else None,
         "publish_id": None,
         "publish_status": None,
         "tiktok_post_ids": [],
@@ -164,7 +187,9 @@ def run(account: AccountConfig, ctx: dict[str, Any]) -> dict[str, Any]:
     }
 
     try:
-        publish_result = client.post_video(file_path=final_path, caption=caption)
+        publish_result = client.post_video(
+            file_path=final_path, caption=caption, music_id=music_id,
+        )
         log_entry["publish_id"] = publish_result.get("publish_id")
         log_entry["publish_status"] = publish_result.get("status")
         log_entry["tiktok_post_ids"] = publish_result.get("post_ids", [])
@@ -175,8 +200,17 @@ def run(account: AccountConfig, ctx: dict[str, Any]) -> dict[str, Any]:
                 "video_id": video_id,
                 "publish_id": log_entry["publish_id"],
                 "post_ids": log_entry["tiktok_post_ids"],
+                "music_id": music_id,
             },
         )
+        # Append to music_log.json so Agent 9's least-recently-used rotation
+        # knows not to pick the same track again right away.
+        if music_track:
+            log_music_use(
+                account_handle=account.handle,
+                video_id=video_id,
+                track=music_track,
+            )
     except TikTokAPIError as e:
         log_entry["errors"].append(f"publish: {e}")
         log_entry["publish_status"] = "FAILED"

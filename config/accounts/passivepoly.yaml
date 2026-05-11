@@ -107,8 +107,17 @@ videogen:
         tone: "Baritone Ben — male English, deep / calm register"
 
 editor:
-  music_subdir: "polymarket_lofi" # data/music/polymarket_lofi/*.mp3 (calm, atmospheric)
+  music_subdir: "polymarket_lofi" # data/music/polymarket_lofi/*.mp3 (fallback only)
   caption_font: "Inter"
+
+music:
+  catalog_subdir: "polymarket_lofi"
+  moods:
+    - lofi
+    - focus
+    - chill
+  genres: []
+  top_n_to_keep: 20
 
 api_credentials:
   # HeyGen API key is org-level — env var HEYGEN_API_KEY (read directly).

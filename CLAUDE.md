@@ -22,8 +22,10 @@ Fully autonomous multi-account TikTok UGC video pipeline. Markets 3 accounts in 
 | 4 | Video prompt engineer | [agents/videoprompt/](agents/videoprompt/) | Deterministic HeyGen v2/video/generate payload formatter. |
 | 5 | Video generator | [agents/videogen/](agents/videogen/) | Calls HeyGen API, polls until ready, QC. |
 | 6 | Editor | [agents/editor/](agents/editor/) | FFmpeg: 9:16 crop, captions, music, overlays. |
-| 7 | Publisher | [agents/publisher/](agents/publisher/) | Posts to correct account at peak times w/ correct CTA. |
+| 7 | Publisher | [agents/publisher/](agents/publisher/) | Posts to correct account at peak times w/ correct CTA. Attaches `music_id` from Agent 9 at upload. |
 | 8 | Performance monitor | [agents/monitor/](agents/monitor/) | Tracks per-video analytics, feeds winners to Agent 2, kills losers. |
+| 9 | Music catalog scout | [agents/music_scout/](agents/music_scout/) | Weekly (Sun 5 AM) — pulls TikTok commercial-music `music_id`s per account mood. NOT a downloader: publisher attaches IDs at upload time so videos get the trending-sound algorithmic boost. |
+| 10 | Self-repair monitor | [agents/health/](agents/health/) | Every 15 min — runs all health checks, auto-repairs known failures with exponential backoff, alerts Discord when repair gives up. Daily 7 AM Discord report. |
 
 ## Personas (locked — do not drift)
 
@@ -34,7 +36,10 @@ Fully autonomous multi-account TikTok UGC video pipeline. Markets 3 accounts in 
 ## Daily Schedule (America/New_York)
 
 ```
+*/15   Agent 10           (health monitor + auto-repair)
+05:00  Agent 9            (music scout — Sundays only)
 06:00  Agent 1 + Agent 2  (scan trends + extract hooks)
+07:00  Agent 10           (daily health report → Discord)
 07:00  Agent 3            (write scripts)
 08:00  Agent 4 + Agent 5  (generate video prompts + videos)
 10:00  Agent 6            (edit + assemble)
@@ -93,6 +98,8 @@ Secrets live in `.env` (see `.env.example`). Never commit. Per-account API keys 
 | 6 (editor) | `data/final_videos/<handle>/<date>/<video_id>/{final.mp4, result.json}` + `manifest.json` | `result.final_path`, `result.metadata.caption`, `result.metadata.hashtags`, `result.metadata.cta_url` |
 | 7 (publisher) | `data/published_log/<handle>/<date>/<video_id>.json` + `manifest.json` | `publish_status` (`PUBLISH_COMPLETE`/`FAILED`), `tiktok_post_ids[]`, `caption_final`, `hashtags_final`, `link_plan` |
 | 8 (monitor) | `data/analytics/<handle>/<date>/{per_video,winners,losers,report}.json` + `report.md` + `data/analytics/<handle>/exclusions/{patterns,products}.json` (cumulative) + `data/analytics/_global/<date>/summary.{json,md}` | `winners[]` consumed by Agent 2 the next morning. `losers[]` and `exclusions/*` are advisory today (Agents 1/2 don't read them yet — wire when ready). |
+| 9 (music_scout) | `data/music_catalog/<subdir>/manifest.json` (per account) + `data/music_catalog/music_log.json` (shared history) | `manifest.tracks[].music_id` consumed by Agent 7 at upload time. `music_log.json` drives LRU rotation so the same track isn't reused within 7 days. |
+| 10 (health) | `data/health/<date>/<HHMM>.json` (15-min snapshots) | Audit trail only — not consumed by other agents. Discord webhook is the live surface. |
 
 ## Music library
 
@@ -110,7 +117,7 @@ Caption rendering uses `Inter` by default. Either install Inter system-wide (`br
 
 ## Status
 
-**All 8 agents are fully implemented.** The pipeline is feature-complete: Agent 1 → … → Agent 8 → (winners.json) → Agent 2 the next morning. The only writes against external systems still pending wire-up are:
+**All 10 agents are fully implemented.** The pipeline is feature-complete: Agent 1 → … → Agent 8 → (winners.json) → Agent 2 the next morning. The only writes against external systems still pending wire-up are:
 
 - `integrations/tiktok_creative_center.py:_fetch_raw` — Creative Center trend scrape (Agent 1, affiliate accounts).
 - `integrations/tiktok_scraper.py:_fetch` — top-videos-by-username/keyword scrape (Agent 2).

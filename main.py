@@ -15,8 +15,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from agents.editor.editor import run as editor_run
+from agents.health.monitor import run as health_monitor_run
+from agents.health.report import run as health_report_run
 from agents.hooks.analyzer import run as hooks_run
 from agents.monitor.tracker import run as monitor_run
+from agents.music_scout.scout import run as music_scout_run
 from agents.publisher.publisher import run as publisher_run
 from agents.scout.scout import run as scout_run
 from agents.scriptwriter.writer import run as scriptwriter_run
@@ -50,6 +53,14 @@ AGENT_REGISTRY = {
     "publisher_1":  ("publisher",    publisher_run),
     "publisher_2":  ("publisher",    publisher_run),
     "monitor":      ("monitor",      monitor_run),
+    "music_scout":  ("music_scout",  music_scout_run),     # Agent 9 — weekly Sunday
+}
+
+# Agent 10 — global slots (not per-account). Different fn signature:
+# (pipeline, ctx) instead of (account, ctx). Registered via register_global.
+GLOBAL_AGENT_REGISTRY = {
+    "health_check":  ("health_monitor", health_monitor_run),     # every 15 min
+    "health_report": ("health_report",  health_report_run),      # daily 7 AM
 }
 
 
@@ -57,6 +68,8 @@ def build_scheduler(pipeline: PipelineConfig) -> Scheduler:
     sched = Scheduler(pipeline)
     for slot, (agent_name, fn) in AGENT_REGISTRY.items():
         sched.register(slot, agent_name, fn)
+    for slot, (agent_name, fn) in GLOBAL_AGENT_REGISTRY.items():
+        sched.register_global(slot, agent_name, fn)
     return sched
 
 
@@ -81,8 +94,19 @@ def run_once(slot: str, only_handle: str | None) -> None:
     pipeline = load_pipeline(CONFIG_ROOT)
     log = get_logger("main")
 
+    # Global slots (Agent 10) take a different signature — (pipeline, ctx).
+    if slot in GLOBAL_AGENT_REGISTRY:
+        agent_name, fn = GLOBAL_AGENT_REGISTRY[slot]
+        log.info("one-shot global run", extra={"slot": slot})
+        try:
+            fn(pipeline, {"slot": slot, "mode": "one_shot"})
+        except Exception:
+            get_logger(agent_name).exception("global agent crashed")
+        return
+
     if slot not in AGENT_REGISTRY:
-        log.error("unknown slot", extra={"slot": slot, "valid": list(AGENT_REGISTRY)})
+        valid = list(AGENT_REGISTRY) + list(GLOBAL_AGENT_REGISTRY)
+        log.error("unknown slot", extra={"slot": slot, "valid": valid})
         sys.exit(2)
 
     agent_name, fn = AGENT_REGISTRY[slot]

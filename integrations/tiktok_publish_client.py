@@ -129,9 +129,16 @@ class TikTokPublishClient:
         disable_stitch: bool = False,
         disable_comment: bool = False,
         cover_timestamp_ms: int = 1000,
+        music_id: str | None = None,
     ) -> dict[str, Any]:
         """High-level: init → upload → poll until PUBLISH_COMPLETE. Returns
         the final status dict (which includes the post id when complete).
+
+        `music_id`: optional commercial-music ID from TikTok's library. When
+        set, the post is attributed to that sound — TikTok's algorithm gives
+        videos using trending sounds an algorithmic boost. The ID comes from
+        Agent 9 (music scout) and is selected at publish time by the
+        publisher.
         """
         size = file_path.stat().st_size
         post_info = {
@@ -142,6 +149,8 @@ class TikTokPublishClient:
             "disable_stitch": disable_stitch,
             "video_cover_timestamp_ms": cover_timestamp_ms,
         }
+        if music_id:
+            post_info["music_id"] = music_id
         init = self.init_upload(video_size=size, post_info=post_info)
         self.upload_bytes(init["upload_url"], file_path)
 

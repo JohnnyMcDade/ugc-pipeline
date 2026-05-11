@@ -96,8 +96,18 @@ videogen:
         tone: "Callahan — male English, conversational"
 
 editor:
-  music_subdir: "mens_grooming"   # data/music/mens_grooming/*.mp3
+  music_subdir: "mens_grooming"   # data/music/mens_grooming/*.mp3 (fallback only — Agent 7 attaches music_id when available)
   caption_font: "Inter"
+
+# Music scout (Agent 9) — picks TikTok commercial-music IDs to attach at upload time.
+music:
+  catalog_subdir: "mens_grooming"   # data/music_catalog/mens_grooming/manifest.json
+  moods:
+    - upbeat
+    - energetic
+    - lifestyle
+  genres: []
+  top_n_to_keep: 20
 
 api_credentials:
   # HeyGen API key is org-level (one for all 3 accounts), env var = HEYGEN_API_KEY.

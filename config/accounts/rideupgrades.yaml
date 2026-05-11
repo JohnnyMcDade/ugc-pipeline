@@ -95,8 +95,17 @@ videogen:
         tone: "Mature Morgan — male English, measured / authoritative"
 
 editor:
-  music_subdir: "car_culture"     # data/music/car_culture/*.mp3
+  music_subdir: "car_culture"     # data/music/car_culture/*.mp3 (fallback only)
   caption_font: "Inter"
+
+music:
+  catalog_subdir: "car_culture"
+  moods:
+    - driving
+    - hype
+    - bass
+  genres: []
+  top_n_to_keep: 20
 
 api_credentials:
   # HeyGen API key is org-level — env var HEYGEN_API_KEY (read directly).
