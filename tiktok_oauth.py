@@ -175,7 +175,64 @@ def _build_authorize_url(state: str, code_challenge: str) -> str:
     return f"{AUTHORIZE_URL}?{qs}"
 
 
+def _redact(value: str, head: int = 8, tail: int = 4) -> str:
+    """Show first `head` and last `tail` chars + length for sensitive values.
+
+    Lets us log the SHAPE of a token without dumping the full credential to
+    terminal scrollback / log files. None and empty string both render as
+    a clear marker so empty values are visually obvious.
+    """
+    if value is None:
+        return "<None>"
+    s = str(value)
+    if not s:
+        return "<EMPTY>"
+    if len(s) <= head + tail:
+        return f"<{len(s)} chars: {s!r}>"
+    return f"<{len(s)} chars: {s[:head]!r}...{s[-tail:]!r}>"
+
+
+def _log_response(r: "requests.Response") -> dict[str, Any]:
+    """Print HTTP status + parsed body (with token values redacted) and
+    return the parsed JSON body. Lets us see the SHAPE of TikTok's response
+    even when our extraction logic gets it wrong.
+    """
+    print(f"  ↳ HTTP {r.status_code}  ·  content-type: {r.headers.get('Content-Type', '?')}")
+    try:
+        body = r.json()
+    except ValueError:
+        print(f"  ↳ raw (non-JSON): {r.text[:500]}")
+        return {}
+
+    # Pretty-print the body with token values redacted. Recursive walk.
+    SENSITIVE_KEYS = {"access_token", "refresh_token"}
+
+    def _walk(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {
+                k: (_redact(v) if k in SENSITIVE_KEYS and isinstance(v, str) else _walk(v))
+                for k, v in node.items()
+            }
+        if isinstance(node, list):
+            return [_walk(x) for x in node]
+        return node
+
+    import json as _json
+    redacted = _json.dumps(_walk(body), indent=2)
+    for line in redacted.splitlines():
+        print(f"  ↳ {line}")
+    return body
+
+
 def _exchange_code_for_token(code: str, code_verifier: str) -> dict[str, Any]:
+    print()
+    print(f"  POST {TOKEN_URL}")
+    print(f"    grant_type=authorization_code")
+    print(f"    client_key={CLIENT_KEY[:6]}...  (key preview)")
+    print(f"    code={code[:8]}...  (length {len(code)})")
+    print(f"    code_verifier={code_verifier[:8]}...  (length {len(code_verifier)})")
+    print(f"    redirect_uri={REDIRECT_URI}")
+
     r = requests.post(
         TOKEN_URL,
         data={
@@ -191,17 +248,53 @@ def _exchange_code_for_token(code: str, code_verifier: str) -> dict[str, Any]:
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=15,
     )
+
+    body = _log_response(r)
+
     if r.status_code >= 400:
-        print(f"\n✗ Token exchange failed: HTTP {r.status_code}")
-        print(r.text[:500])
+        print(f"\n✗ Token exchange failed at HTTP layer: {r.status_code}")
         sys.exit(1)
-    body = r.json()
-    # TikTok sometimes wraps the payload under "data", sometimes not — handle both.
-    inner = body.get("data") if isinstance(body.get("data"), dict) else body
-    if "access_token" not in (inner or {}):
-        print(f"\n✗ Token response missing access_token: {body}")
+
+    # TikTok sometimes wraps the payload under "data", sometimes not — try both
+    # and pick whichever has a truthy access_token. Previously we used the first
+    # shape that had the KEY present, but TikTok can return a top-level 200 with
+    # access_token PRESENT BUT EMPTY (e.g. on certain PKCE/scope edge cases) —
+    # writing that to .env produced today's "completed without errors but empty
+    # values" symptom. The fix: require a NON-EMPTY access_token.
+    candidates = []
+    if isinstance(body.get("data"), dict):
+        candidates.append(("body['data']", body["data"]))
+    candidates.append(("body (top-level)", body))
+
+    chosen = None
+    for label, c in candidates:
+        if c and isinstance(c.get("access_token"), str) and c["access_token"].strip():
+            chosen = c
+            print(f"  ↳ extracted tokens from {label}")
+            break
+
+    if chosen is None:
+        # Surface TikTok's error fields explicitly so the user knows what to fix.
+        err = body.get("error") or (body.get("data") or {}).get("error")
+        desc = (
+            body.get("error_description")
+            or (body.get("data") or {}).get("error_description")
+            or (body.get("data") or {}).get("description")
+        )
+        print(f"\n✗ Token exchange returned a non-error response but no usable access_token.")
+        if err:
+            print(f"  TikTok error:        {err}")
+        if desc:
+            print(f"  TikTok description:  {desc}")
+        print(f"  log_id (for support): {body.get('log_id') or (body.get('data') or {}).get('log_id')}")
+        print(f"\n  Common causes:")
+        print(f"    - PKCE code_verifier didn't match the code_challenge sent at /authorize")
+        print(f"    - authorization code already used or expired (codes are single-use, ~10 min)")
+        print(f"    - redirect_uri at exchange differs from the one at /authorize")
+        print(f"    - app missing the requested scopes ({', '.join(SCOPES)})")
         sys.exit(1)
-    return inner
+
+    return chosen
 
 
 def _write_env(account_handle: str, token_data: dict[str, Any]) -> tuple[str, str, str]:
@@ -216,6 +309,25 @@ def _write_env(account_handle: str, token_data: dict[str, Any]) -> tuple[str, st
     access_token = token_data["access_token"]
     open_id = token_data.get("open_id", "")
     refresh_token = token_data.get("refresh_token", "")
+
+    # Defensive: if any of these are empty we should NOT silently write empty
+    # lines to .env. The _exchange_code_for_token check above should have
+    # already bailed in this case, but belt-and-braces — the bug we're fixing
+    # is precisely "wrote empty values without complaining."
+    if not access_token:
+        print(f"\n✗ refusing to write empty access_token to .env")
+        sys.exit(1)
+    if not open_id:
+        print(f"\n⚠ open_id is empty in token response — {business_id_key} will be empty")
+    if not refresh_token:
+        print(f"\n⚠ refresh_token is empty in token response — {refresh_key} will be empty "
+              f"(no refresh helper possible; you'll have to re-run OAuth every 24h)")
+
+    print()
+    print(f"  writing to {ENV_PATH}:")
+    print(f"    {session_key}     = {_redact(access_token)}")
+    print(f"    {business_id_key} = {_redact(open_id)}")
+    print(f"    {refresh_key}     = {_redact(refresh_token)}")
 
     if not ENV_PATH.exists():
         print(f"\n✗ .env not found at {ENV_PATH}")
@@ -249,7 +361,45 @@ def _write_env(account_handle: str, token_data: dict[str, Any]) -> tuple[str, st
     tmp_path = ENV_PATH.with_suffix(".env.tmp")
     tmp_path.write_text("".join(new_lines), encoding="utf-8")
     os.replace(tmp_path, ENV_PATH)
+
+    # Post-write verification — re-read .env and confirm the three values
+    # landed. Catches every silent-failure path: file permission weirdness,
+    # path mismatch, line-matching off-by-one, anything we haven't thought of.
+    written = _read_env_keys({session_key, business_id_key, refresh_key})
+    expected = {
+        session_key: access_token,
+        business_id_key: open_id,
+        refresh_key: refresh_token,
+    }
+    drift = [(k, written.get(k), expected[k]) for k in expected
+             if written.get(k) != expected[k]]
+    if drift:
+        print(f"\n✗ post-write verification failed at {ENV_PATH}:")
+        for k, got, exp in drift:
+            print(f"    {k}: wrote {_redact(exp)}, file now reads {_redact(got)}")
+        sys.exit(1)
+    print(f"  ✓ post-write verify: all 3 keys present in .env with matching values")
+
     return session_key, business_id_key, refresh_key
+
+
+def _read_env_keys(keys: set[str]) -> dict[str, str]:
+    """Parse .env for the specified keys. Doesn't use python-dotenv because
+    we want the LITERAL on-disk value, not what got loaded into os.environ
+    at process start.
+    """
+    if not ENV_PATH.exists():
+        return {}
+    out: dict[str, str] = {}
+    for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        k, v = stripped.split("=", 1)
+        k = k.strip()
+        if k in keys:
+            out[k] = v.strip()
+    return out
 
 
 def run_oauth(account_handle: str) -> None:
