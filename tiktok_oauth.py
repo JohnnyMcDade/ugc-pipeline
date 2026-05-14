@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""TikTok Content Posting API — OAuth helper.
+"""TikTok Content Posting API — OAuth helper (manual-paste variant).
 
-Runs the OAuth 2.0 authorization-code flow against TikTok's Login Kit for a
-single account, captures the access_token + open_id via a local callback
-server, and writes them into .env under the per-account env var names the
-rest of the pipeline reads.
+TikTok rejects http://localhost redirect URIs in production, so the OAuth
+code is sent to your passivepoly.com domain instead and you paste it back
+into the terminal manually.
+
+Flow:
+  1. Script prints + opens the authorize URL.
+  2. You sign in as the target account and click Authorize.
+  3. TikTok redirects to https://passivepoly.com/callback?code=...&state=...
+  4. callback.html (in this repo) renders the code in a click-to-copy box.
+  5. You paste the code into this terminal.
+  6. Script exchanges the code for tokens and writes them to .env.
 
 Usage:
     python tiktok_oauth.py sharpguylab
@@ -12,30 +19,32 @@ Usage:
     python tiktok_oauth.py passivepoly
 
 PREREQUISITES on the TikTok dev console for your app:
-  1. `http://localhost:8080/callback` is in the app's allowed redirect URIs.
-  2. The app has the Content Posting API + Login Kit products enabled.
-  3. The app has the scopes `user.info.basic`, `video.upload`, and
-     `video.publish` listed (request them in the app settings if not).
-  4. TIKTOK_CLIENT_KEY + TIKTOK_CLIENT_SECRET are set in .env (already are).
+  1. `https://passivepoly.com/callback` is in the app's allowed redirect URIs.
+  2. The Content Posting API + Login Kit products are enabled.
+  3. Scopes `user.info.basic`, `video.upload`, `video.publish` are approved.
+
+PREREQUISITES on passivepoly.com:
+  - Deploy `callback.html` (next to this file) at `/callback`. It's a
+    pure static page — no server-side logic needed — that parses
+    `?code=...` out of the query string and displays it for copying.
 
 What this writes to .env (per account):
-  TIKTOK_SESSION_<HANDLE>       — access_token  (lifetime ~24h)
-  TIKTOK_BUSINESS_ID_<HANDLE>   — open_id       (stable per (app, user))
-  TIKTOK_REFRESH_TOKEN_<HANDLE> — refresh_token (lifetime ~365d) — enables a
-                                                 future refresh helper that
-                                                 mints new access_tokens
-                                                 without re-authorizing
-                                                 in the browser.
+  TIKTOK_SESSION_<HANDLE>       — access_token  (~24h)
+  TIKTOK_BUSINESS_ID_<HANDLE>   — open_id       (stable per app+user)
+  TIKTOK_REFRESH_TOKEN_<HANDLE> — refresh_token (~365d; powers refresh)
+
+Security note on the manual flow: the OAuth code is briefly visible in
+the URL bar of your browser on passivepoly.com. The code is single-use
+and expires within ~10 minutes, but anything logging request URLs on
+the passivepoly.com side (nginx access logs, CDN analytics) will see it.
+Standard caveat for any browser-redirect OAuth flow — just be aware.
 """
 
 from __future__ import annotations
 
-import http.server
 import os
 import secrets
-import socketserver
 import sys
-import threading
 import urllib.parse
 import webbrowser
 from pathlib import Path
@@ -50,8 +59,7 @@ load_dotenv(override=True)
 
 CLIENT_KEY = os.environ.get("TIKTOK_CLIENT_KEY", "").strip()
 CLIENT_SECRET = os.environ.get("TIKTOK_CLIENT_SECRET", "").strip()
-REDIRECT_URI = "http://localhost:8080/callback"
-CALLBACK_PORT = 8080
+REDIRECT_URI = "https://passivepoly.com/callback"
 SCOPES = ["user.info.basic", "video.upload", "video.publish"]
 ENV_PATH = Path(__file__).parent / ".env"
 
@@ -78,58 +86,6 @@ ACCOUNT_ENV_MAP: dict[str, dict[str, str]] = {
     },
 }
 
-# Captured by the callback handler; consumed by the main thread.
-_captured: dict[str, Any] = {"code": None, "state": None, "error": None,
-                              "error_description": None}
-_done = threading.Event()
-
-
-class _CallbackHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self) -> None:
-        parsed = urllib.parse.urlparse(self.path)
-        if parsed.path != "/callback":
-            self.send_response(404)
-            self.end_headers()
-            return
-        params = urllib.parse.parse_qs(parsed.query)
-        _captured["code"] = (params.get("code") or [None])[0]
-        _captured["state"] = (params.get("state") or [None])[0]
-        _captured["error"] = (params.get("error") or [None])[0]
-        _captured["error_description"] = (params.get("error_description") or [None])[0]
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.end_headers()
-        if _captured["error"]:
-            html = (
-                "<html><body style='font-family: sans-serif; padding: 40px'>"
-                f"<h1 style='color:#e74c3c'>OAuth error: {_captured['error']}</h1>"
-                f"<p>{_captured['error_description'] or ''}</p>"
-                "<p>You can close this tab.</p>"
-                "</body></html>"
-            )
-        else:
-            html = (
-                "<html><body style='font-family: sans-serif; padding: 40px'>"
-                "<h1 style='color:#2ecc71'>✓ Authorization received</h1>"
-                "<p>Token exchange happening in the terminal. You can close this tab.</p>"
-                "</body></html>"
-            )
-        self.wfile.write(html.encode("utf-8"))
-        _done.set()
-
-    def log_message(self, fmt, *args) -> None:  # noqa: A003 - silencing http.server
-        # Suppress the default request log line — keeps terminal output clean
-        # while the user is waiting on the callback.
-        pass
-
-
-def _start_callback_server() -> socketserver.TCPServer:
-    socketserver.TCPServer.allow_reuse_address = True
-    server = socketserver.TCPServer(("localhost", CALLBACK_PORT), _CallbackHandler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server
-
 
 def _build_authorize_url(state: str) -> str:
     qs = urllib.parse.urlencode({
@@ -142,8 +98,23 @@ def _build_authorize_url(state: str) -> str:
     return f"{AUTHORIZE_URL}?{qs}"
 
 
+def _extract_code(pasted: str) -> str:
+    """Tolerate either the bare code OR the full callback URL pasted back.
+
+    If the user copied the whole address bar contents, parse the `code`
+    query parameter out of it. Otherwise treat the input as the code itself.
+    """
+    pasted = pasted.strip()
+    if not pasted:
+        return ""
+    if pasted.startswith(("http://", "https://")):
+        parsed = urllib.parse.urlparse(pasted)
+        params = urllib.parse.parse_qs(parsed.query)
+        return (params.get("code") or [""])[0].strip()
+    return pasted
+
+
 def _exchange_code_for_token(code: str) -> dict[str, Any]:
-    """POST the authorization code to TikTok's token endpoint."""
     r = requests.post(
         TOKEN_URL,
         data={
@@ -161,8 +132,7 @@ def _exchange_code_for_token(code: str) -> dict[str, Any]:
         print(r.text[:500])
         sys.exit(1)
     body = r.json()
-    # TikTok wraps the response. Some app types nest under `data`, some don't —
-    # handle both.
+    # TikTok sometimes wraps the payload under "data", sometimes not — handle both.
     inner = body.get("data") if isinstance(body.get("data"), dict) else body
     if "access_token" not in (inner or {}):
         print(f"\n✗ Token response missing access_token: {body}")
@@ -172,8 +142,7 @@ def _exchange_code_for_token(code: str) -> dict[str, Any]:
 
 def _write_env(account_handle: str, token_data: dict[str, Any]) -> tuple[str, str, str]:
     """Replace (or append) the three per-account env var lines in .env.
-    Writes atomically via temp file + rename so a crash mid-write can't
-    corrupt .env.
+    Atomic via temp file + rename so an interrupted run can't corrupt secrets.
     """
     keys = ACCOUNT_ENV_MAP[account_handle]
     session_key = keys["session"]
@@ -207,8 +176,6 @@ def _write_env(account_handle: str, token_data: dict[str, Any]) -> tuple[str, st
                 break
         if not replaced:
             new_lines.append(line)
-    # Append anything missing (in case the .env doesn't have the key yet —
-    # e.g. TIKTOK_REFRESH_TOKEN_<HANDLE> is new).
     for k, repl in replacements.items():
         if k not in seen:
             if new_lines and not new_lines[-1].endswith("\n"):
@@ -238,51 +205,35 @@ def run_oauth(account_handle: str) -> None:
     print(f"  redirect_uri: {REDIRECT_URI}")
     print(f"  scopes:       {', '.join(SCOPES)}")
     print()
-
-    # Bring up the callback server BEFORE opening the browser so we don't
-    # race against a fast redirect.
-    try:
-        server = _start_callback_server()
-    except OSError as e:
-        print(f"✗ Could not bind localhost:{CALLBACK_PORT}: {e}")
-        print(f"  Is something else (the polymarket-bot API, maybe?) using that port?")
-        sys.exit(1)
-
-    print(f"  Opening browser → {auth_url[:80]}...")
+    print("  Step 1/3: opening the TikTok authorize page in your browser.")
     print()
-    print(f"  If the browser doesn't open automatically, paste this into a browser:")
+    print("  If it doesn't open, paste this URL manually:")
     print(f"    {auth_url}")
     print()
     webbrowser.open(auth_url)
 
-    print("  Waiting for callback at http://localhost:8080/callback ...")
-    print("  (timeout: 4 minutes — click 'Authorize' on the TikTok page)")
-    completed = _done.wait(timeout=240)
-    server.shutdown()
+    print("  Step 2/3: sign in as the target account, click Authorize.")
+    print(f"  TikTok will redirect to {REDIRECT_URI}?code=...&state=...")
+    print("  callback.html on that page renders the code in a copy box.")
+    print()
+    print("  Step 3/3: paste the code below.")
+    print("  (You can paste either the bare code OR the full callback URL —")
+    print("   if you paste the URL the script will extract the code itself.)")
+    print()
 
-    if not completed:
-        print("\n✗ OAuth timed out — no callback received within 4 minutes.")
+    try:
+        pasted = input("  code → ")
+    except (EOFError, KeyboardInterrupt):
+        print("\n✗ aborted")
         sys.exit(1)
 
-    if _captured["error"]:
-        print(f"\n✗ OAuth error from TikTok: {_captured['error']}")
-        if _captured["error_description"]:
-            print(f"  description: {_captured['error_description']}")
-        sys.exit(1)
-
-    if _captured["state"] != state:
-        print("\n✗ State mismatch — possible CSRF, aborting")
-        print(f"  expected: {state[:16]}...")
-        print(f"  received: {(_captured['state'] or '')[:16]}...")
-        sys.exit(1)
-
-    code = _captured["code"]
+    code = _extract_code(pasted)
     if not code:
-        print("\n✗ No authorization code received from TikTok")
+        print("✗ empty code")
         sys.exit(1)
 
     print()
-    print("  ✓ Authorization code received, exchanging for access token...")
+    print(f"  exchanging code (state ref: {state[:12]}...) for access token...")
     token_data = _exchange_code_for_token(code)
 
     session_key, business_id_key, refresh_key = _write_env(account_handle, token_data)
@@ -298,7 +249,7 @@ def run_oauth(account_handle: str) -> None:
     print()
     print(f"  ⏰ access_token expires in:  {expires_in // 3600}h {(expires_in % 3600) // 60}m")
     print(f"  ⏰ refresh_token expires in: {refresh_expires_in // 86400}d "
-          f"(use it to mint new access_tokens without re-authorizing)")
+          f"(refresh helper uses it to mint new access_tokens without re-auth)")
     print()
 
 
