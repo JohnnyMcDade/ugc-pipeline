@@ -26,6 +26,8 @@ What this writes to .env (per account):
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import http.server
 import os
 import secrets
@@ -140,18 +142,40 @@ def _start_callback_server() -> socketserver.TCPServer:
     return server
 
 
-def _build_authorize_url(state: str) -> str:
+def _generate_pkce() -> tuple[str, str]:
+    """Generate a PKCE (RFC 7636) verifier + S256 challenge pair.
+
+    Returns (code_verifier, code_challenge).
+
+    - verifier is cryptographically random, 86 base64url chars (well within
+      the RFC's 43-128 range; secrets.token_urlsafe(64) already uses the
+      base64url alphabet and strips padding, so it's a valid verifier as-is).
+    - challenge is the BASE64URL-encoded SHA-256 of the verifier, no padding.
+
+    The verifier MUST NOT be logged or stored anywhere — only sent to the
+    token endpoint at exchange time. The challenge is fine to put in URLs.
+    """
+    verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
+
+
+def _build_authorize_url(state: str, code_challenge: str) -> str:
     qs = urllib.parse.urlencode({
         "client_key": CLIENT_KEY,
         "scope": ",".join(SCOPES),
         "response_type": "code",
         "redirect_uri": REDIRECT_URI,
         "state": state,
+        # PKCE params (TikTok requires these — RFC 7636 + their docs).
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
     })
     return f"{AUTHORIZE_URL}?{qs}"
 
 
-def _exchange_code_for_token(code: str) -> dict[str, Any]:
+def _exchange_code_for_token(code: str, code_verifier: str) -> dict[str, Any]:
     r = requests.post(
         TOKEN_URL,
         data={
@@ -160,6 +184,9 @@ def _exchange_code_for_token(code: str) -> dict[str, Any]:
             "code": code,
             "grant_type": "authorization_code",
             "redirect_uri": REDIRECT_URI,
+            # PKCE proof: server SHA-256s this and compares to the
+            # code_challenge it stored when issuing the code.
+            "code_verifier": code_verifier,
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=15,
@@ -235,12 +262,14 @@ def run_oauth(account_handle: str) -> None:
         sys.exit(1)
 
     state = secrets.token_urlsafe(32)
-    auth_url = _build_authorize_url(state)
+    code_verifier, code_challenge = _generate_pkce()
+    auth_url = _build_authorize_url(state, code_challenge)
 
     print()
     print(f"  TikTok OAuth — authorizing @{account_handle}")
     print(f"  redirect_uri: {REDIRECT_URI}")
     print(f"  scopes:       {', '.join(SCOPES)}")
+    print(f"  PKCE:         S256 (code_challenge: {code_challenge[:16]}...)")
     print()
 
     # Bring up the callback server BEFORE opening the browser so a fast
@@ -282,8 +311,8 @@ def run_oauth(account_handle: str) -> None:
         sys.exit(1)
 
     print()
-    print("  ✓ Authorization code received, exchanging for access token...")
-    token_data = _exchange_code_for_token(code)
+    print("  ✓ Authorization code received, exchanging for access token (with PKCE verifier)...")
+    token_data = _exchange_code_for_token(code, code_verifier)
 
     session_key, business_id_key, refresh_key = _write_env(account_handle, token_data)
 
