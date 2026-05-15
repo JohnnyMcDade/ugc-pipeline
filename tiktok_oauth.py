@@ -47,8 +47,15 @@ from dotenv import load_dotenv
 # silently shadow the real .env value.
 load_dotenv(override=True)
 
+# Production credentials (default unless --sandbox flag is passed).
 CLIENT_KEY = os.environ.get("TIKTOK_CLIENT_KEY", "").strip()
 CLIENT_SECRET = os.environ.get("TIKTOK_CLIENT_SECRET", "").strip()
+
+# Sandbox credentials. TikTok's sandbox uses the same auth + token endpoints —
+# the app's sandbox-ness is determined by the client_key (sb-prefixed).
+SANDBOX_CLIENT_KEY = os.environ.get("TIKTOK_SANDBOX_CLIENT_KEY", "").strip()
+SANDBOX_CLIENT_SECRET = os.environ.get("TIKTOK_SANDBOX_CLIENT_SECRET", "").strip()
+
 REDIRECT_URI = "http://localhost:8080/callback"
 CALLBACK_PORT = 8080
 SCOPES = ["user.info.basic", "video.upload", "video.publish"]
@@ -77,6 +84,15 @@ ACCOUNT_ENV_MAP: dict[str, dict[str, str]] = {
         "business_id": "TIKTOK_BUSINESS_ID_PASSIVEPOLY",
         "refresh": "TIKTOK_REFRESH_TOKEN_PASSIVEPOLY",
     },
+}
+
+# Mirror of ACCOUNT_ENV_MAP with SANDBOX_ prefix on every target key, so
+# sandbox tokens never overwrite production tokens. Generated programmatically
+# from ACCOUNT_ENV_MAP to keep them in sync — if you add an account, you
+# only need to update one place.
+SANDBOX_ACCOUNT_ENV_MAP: dict[str, dict[str, str]] = {
+    handle: {role: key.replace("TIKTOK_", "TIKTOK_SANDBOX_", 1) for role, key in keys.items()}
+    for handle, keys in ACCOUNT_ENV_MAP.items()
 }
 
 # Captured by the callback handler in the server thread; consumed by main.
@@ -174,9 +190,9 @@ def _generate_pkce() -> tuple[str, str]:
     return verifier, challenge
 
 
-def _build_authorize_url(state: str, code_challenge: str) -> str:
+def _build_authorize_url(client_key: str, state: str, code_challenge: str) -> str:
     qs = urllib.parse.urlencode({
-        "client_key": CLIENT_KEY,
+        "client_key": client_key,
         "scope": ",".join(SCOPES),
         "response_type": "code",
         "redirect_uri": REDIRECT_URI,
@@ -237,11 +253,14 @@ def _log_response(r: "requests.Response") -> dict[str, Any]:
     return body
 
 
-def _exchange_code_for_token(code: str, code_verifier: str) -> dict[str, Any]:
+def _exchange_code_for_token(
+    code: str, code_verifier: str, *,
+    client_key: str, client_secret: str,
+) -> dict[str, Any]:
     print()
     print(f"  POST {TOKEN_URL}")
     print(f"    grant_type=authorization_code")
-    print(f"    client_key={CLIENT_KEY[:6]}...  (key preview)")
+    print(f"    client_key={client_key[:6]}...  (key preview)")
     print(f"    code={code[:8]}...  (length {len(code)})")
     print(f"    redirect_uri={REDIRECT_URI}")
     print(f"    code_verifier={code_verifier}")
@@ -251,8 +270,8 @@ def _exchange_code_for_token(code: str, code_verifier: str) -> dict[str, Any]:
     r = requests.post(
         TOKEN_URL,
         data={
-            "client_key": CLIENT_KEY,
-            "client_secret": CLIENT_SECRET,
+            "client_key": client_key,
+            "client_secret": client_secret,
             "code": code,
             "grant_type": "authorization_code",
             "redirect_uri": REDIRECT_URI,
@@ -312,11 +331,17 @@ def _exchange_code_for_token(code: str, code_verifier: str) -> dict[str, Any]:
     return chosen
 
 
-def _write_env(account_handle: str, token_data: dict[str, Any]) -> tuple[str, str, str]:
+def _write_env(
+    account_handle: str, token_data: dict[str, Any], *,
+    env_map: dict[str, dict[str, str]],
+) -> tuple[str, str, str]:
     """Replace (or append) the three per-account env var lines in .env.
     Atomic via temp file + rename so an interrupted run can't corrupt secrets.
+
+    `env_map` selects which set of target env-var names to write into —
+    production (ACCOUNT_ENV_MAP) or sandbox (SANDBOX_ACCOUNT_ENV_MAP).
     """
-    keys = ACCOUNT_ENV_MAP[account_handle]
+    keys = env_map[account_handle]
     session_key = keys["session"]
     business_id_key = keys["business_id"]
     refresh_key = keys["refresh"]
@@ -417,18 +442,36 @@ def _read_env_keys(keys: set[str]) -> dict[str, str]:
     return out
 
 
-def run_oauth(account_handle: str) -> None:
-    if not CLIENT_KEY or not CLIENT_SECRET:
-        print("✗ TIKTOK_CLIENT_KEY or TIKTOK_CLIENT_SECRET is empty in .env")
+def run_oauth(account_handle: str, *, sandbox: bool = False) -> None:
+    # Pick credentials + target env keys based on --sandbox flag.
+    if sandbox:
+        client_key = SANDBOX_CLIENT_KEY
+        client_secret = SANDBOX_CLIENT_SECRET
+        env_map = SANDBOX_ACCOUNT_ENV_MAP
+        env_label = "SANDBOX"
+        cred_missing_msg = (
+            "✗ TIKTOK_SANDBOX_CLIENT_KEY or TIKTOK_SANDBOX_CLIENT_SECRET is empty in .env"
+        )
+    else:
+        client_key = CLIENT_KEY
+        client_secret = CLIENT_SECRET
+        env_map = ACCOUNT_ENV_MAP
+        env_label = "PRODUCTION"
+        cred_missing_msg = (
+            "✗ TIKTOK_CLIENT_KEY or TIKTOK_CLIENT_SECRET is empty in .env"
+        )
+
+    if not client_key or not client_secret:
+        print(cred_missing_msg)
         sys.exit(1)
-    if account_handle not in ACCOUNT_ENV_MAP:
+    if account_handle not in env_map:
         print(f"✗ Unknown account: {account_handle!r}")
-        print(f"  Valid: {', '.join(ACCOUNT_ENV_MAP)}")
+        print(f"  Valid: {', '.join(env_map)}")
         sys.exit(1)
 
     state = secrets.token_urlsafe(32)
     code_verifier, code_challenge = _generate_pkce()
-    auth_url = _build_authorize_url(state, code_challenge)
+    auth_url = _build_authorize_url(client_key, state, code_challenge)
 
     # Defensive assertions on the PKCE pair before we even open the browser.
     # If any of these fail, the bug is in _generate_pkce, not in TikTok.
@@ -438,7 +481,8 @@ def run_oauth(account_handle: str) -> None:
     assert "=" not in code_challenge, "challenge has padding (should be stripped)"
 
     print()
-    print(f"  TikTok OAuth — authorizing @{account_handle}")
+    print(f"  TikTok OAuth — authorizing @{account_handle}  [{env_label}]")
+    print(f"  client_key:   {client_key[:6]}...")
     print(f"  redirect_uri: {REDIRECT_URI}")
     print(f"  scopes:       {', '.join(SCOPES)}")
     print(f"  PKCE:         S256 (strict spec — full values printed for verification)")
@@ -496,15 +540,20 @@ def run_oauth(account_handle: str) -> None:
 
     print()
     print("  ✓ Authorization code received, exchanging for access token (with PKCE verifier)...")
-    token_data = _exchange_code_for_token(code, code_verifier)
+    token_data = _exchange_code_for_token(
+        code, code_verifier,
+        client_key=client_key, client_secret=client_secret,
+    )
 
-    session_key, business_id_key, refresh_key = _write_env(account_handle, token_data)
+    session_key, business_id_key, refresh_key = _write_env(
+        account_handle, token_data, env_map=env_map,
+    )
 
     expires_in = int(token_data.get("expires_in") or 0)
     refresh_expires_in = int(token_data.get("refresh_expires_in") or 0)
 
     print()
-    print(f"  ✓ @{account_handle} authorized. Tokens written to .env:")
+    print(f"  ✓ @{account_handle} authorized [{env_label}]. Tokens written to .env:")
     print(f"    {session_key}")
     print(f"    {business_id_key}      = {token_data.get('open_id', '')}")
     print(f"    {refresh_key}")
@@ -516,11 +565,19 @@ def run_oauth(account_handle: str) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        print("Usage: python tiktok_oauth.py <account_handle>")
+    # Parse --sandbox flag positionally — accepted anywhere in argv.
+    args = [a for a in sys.argv[1:] if a != "--sandbox"]
+    sandbox = "--sandbox" in sys.argv[1:]
+
+    if len(args) != 1:
+        print("Usage: python tiktok_oauth.py <account_handle> [--sandbox]")
         print(f"  Valid handles: {', '.join(ACCOUNT_ENV_MAP)}")
+        print()
+        print("  --sandbox     Use TIKTOK_SANDBOX_CLIENT_KEY/SECRET and write tokens to")
+        print("                TIKTOK_SANDBOX_SESSION_<HANDLE> etc. so production tokens")
+        print("                stay untouched.")
         sys.exit(2)
-    run_oauth(sys.argv[1].lower())
+    run_oauth(args[0].lower(), sandbox=sandbox)
 
 
 if __name__ == "__main__":
