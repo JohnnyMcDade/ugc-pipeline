@@ -26,10 +26,13 @@ What this writes to .env (per account):
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import http.server
 import os
 import secrets
 import socketserver
+import string
 import sys
 import threading
 import urllib.parse
@@ -140,13 +143,43 @@ def _start_callback_server() -> socketserver.TCPServer:
     return server
 
 
-def _build_authorize_url(state: str) -> str:
+# RFC 7636 §4.1 unreserved set, used to generate the verifier.
+# Explicit constant (not `secrets.token_urlsafe`) because TikTok's PKCE
+# validator may be stricter than RFC and the previous token_urlsafe-based
+# verifier was rejected with "Code verifier or code challenge is invalid".
+PKCE_UNRESERVED = string.ascii_letters + string.digits + "-._~"  # 66 chars
+PKCE_VERIFIER_LENGTH = 64  # within RFC's 43-128 range
+
+
+def _generate_pkce() -> tuple[str, str]:
+    """Generate a TikTok-strict PKCE pair per RFC 7636.
+
+    Returns (code_verifier, code_challenge).
+
+    Spec we're targeting (per TikTok's docs + RFC 7636 §4):
+      - verifier:  exactly PKCE_VERIFIER_LENGTH (64) chars from the
+                   unreserved set [A-Z a-z 0-9 - . _ ~]
+      - challenge: BASE64URL(SHA256(ASCII(verifier))), all `=` padding stripped
+
+    Both values are PRINTED in run_oauth for manual verification — see the
+    `openssl dgst -sha256` recipe printed alongside.
+    """
+    verifier = "".join(secrets.choice(PKCE_UNRESERVED) for _ in range(PKCE_VERIFIER_LENGTH))
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
+
+
+def _build_authorize_url(state: str, code_challenge: str) -> str:
     qs = urllib.parse.urlencode({
         "client_key": CLIENT_KEY,
         "scope": ",".join(SCOPES),
         "response_type": "code",
         "redirect_uri": REDIRECT_URI,
         "state": state,
+        # PKCE — TikTok requires both params.
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
     })
     return f"{AUTHORIZE_URL}?{qs}"
 
@@ -200,14 +233,16 @@ def _log_response(r: "requests.Response") -> dict[str, Any]:
     return body
 
 
-def _exchange_code_for_token(code: str) -> dict[str, Any]:
+def _exchange_code_for_token(code: str, code_verifier: str) -> dict[str, Any]:
     print()
     print(f"  POST {TOKEN_URL}")
     print(f"    grant_type=authorization_code")
     print(f"    client_key={CLIENT_KEY[:6]}...  (key preview)")
     print(f"    code={code[:8]}...  (length {len(code)})")
     print(f"    redirect_uri={REDIRECT_URI}")
-    print(f"    (no PKCE — confidential-client flow w/ client_secret only)")
+    print(f"    code_verifier={code_verifier}")
+    print(f"    code_verifier length: {len(code_verifier)} chars")
+    print(f"    (sending exactly the same verifier the challenge was derived from)")
 
     r = requests.post(
         TOKEN_URL,
@@ -217,6 +252,7 @@ def _exchange_code_for_token(code: str) -> dict[str, Any]:
             "code": code,
             "grant_type": "authorization_code",
             "redirect_uri": REDIRECT_URI,
+            "code_verifier": code_verifier,
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=15,
@@ -261,11 +297,12 @@ def _exchange_code_for_token(code: str) -> dict[str, Any]:
             print(f"  TikTok description:  {desc}")
         print(f"  log_id (for support): {body.get('log_id') or (body.get('data') or {}).get('log_id')}")
         print(f"\n  Common causes:")
-        print(f"    - authorization code already used or expired (codes are single-use, ~10 min)")
+        print(f"    - PKCE verifier doesn't match the challenge sent at /authorize")
+        print(f"      (use the openssl verify command printed earlier to check the math)")
+        print(f"    - authorization code already used or expired (single-use, ~10 min)")
         print(f"    - redirect_uri at exchange differs from the one at /authorize")
         print(f"    - app missing the requested scopes ({', '.join(SCOPES)})")
-        print(f"    - app requires PKCE — if you see 'code_challenge required',")
-        print(f"      revert this commit (PKCE was just removed as a debug step).")
+        print(f"    - client_secret in .env doesn't match the TikTok app's secret")
         sys.exit(1)
 
     return chosen
@@ -386,13 +423,33 @@ def run_oauth(account_handle: str) -> None:
         sys.exit(1)
 
     state = secrets.token_urlsafe(32)
-    auth_url = _build_authorize_url(state)
+    code_verifier, code_challenge = _generate_pkce()
+    auth_url = _build_authorize_url(state, code_challenge)
+
+    # Defensive assertions on the PKCE pair before we even open the browser.
+    # If any of these fail, the bug is in _generate_pkce, not in TikTok.
+    assert 43 <= len(code_verifier) <= 128, f"verifier length out of spec: {len(code_verifier)}"
+    assert all(c in PKCE_UNRESERVED for c in code_verifier), "verifier has out-of-charset chars"
+    assert len(code_challenge) == 43, f"S256 challenge should be 43 chars, got {len(code_challenge)}"
+    assert "=" not in code_challenge, "challenge has padding (should be stripped)"
 
     print()
     print(f"  TikTok OAuth — authorizing @{account_handle}")
     print(f"  redirect_uri: {REDIRECT_URI}")
     print(f"  scopes:       {', '.join(SCOPES)}")
-    print(f"  PKCE:         OFF (debug step — confidential-client flow w/ secret only)")
+    print(f"  PKCE:         S256 (strict spec — full values printed for verification)")
+    print()
+    print(f"  code_verifier:  {code_verifier}")
+    print(f"    length:       {len(code_verifier)} chars (must be 43-128)")
+    print(f"    charset OK:   {all(c in PKCE_UNRESERVED for c in code_verifier)} (RFC 7636 unreserved set)")
+    print()
+    print(f"  code_challenge: {code_challenge}")
+    print(f"    method:       S256")
+    print(f"    length:       {len(code_challenge)} chars (always 43 for SHA-256 base64url no-pad)")
+    print()
+    print(f"  Verify the math yourself:")
+    print(f"    echo -n '{code_verifier}' | openssl dgst -sha256 -binary | base64 | tr '+/' '-_' | tr -d '='")
+    print(f"  Should print: {code_challenge}")
     print()
 
     # Bring up the callback server BEFORE opening the browser so a fast
@@ -434,8 +491,8 @@ def run_oauth(account_handle: str) -> None:
         sys.exit(1)
 
     print()
-    print("  ✓ Authorization code received, exchanging for access token...")
-    token_data = _exchange_code_for_token(code)
+    print("  ✓ Authorization code received, exchanging for access token (with PKCE verifier)...")
+    token_data = _exchange_code_for_token(code, code_verifier)
 
     session_key, business_id_key, refresh_key = _write_env(account_handle, token_data)
 
