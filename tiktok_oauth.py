@@ -143,28 +143,32 @@ def _start_callback_server() -> socketserver.TCPServer:
     return server
 
 
-# RFC 7636 §4.1 unreserved set, used to generate the verifier.
-# Explicit constant (not `secrets.token_urlsafe`) because TikTok's PKCE
-# validator may be stricter than RFC and the previous token_urlsafe-based
-# verifier was rejected with "Code verifier or code challenge is invalid".
-PKCE_UNRESERVED = string.ascii_letters + string.digits + "-._~"  # 66 chars
+# TikTok's PKCE validator rejects the full RFC 7636 unreserved set
+# [A-Z a-z 0-9 - . _ ~]. Per TikTok's actual behavior (3 rejection rounds
+# with verifiers that included `.` or `~`), restrict the verifier alphabet
+# to base64url-strict: [A-Z a-z 0-9 - _]. This is a subset of both
+# RFC 7636 §4.1 (so still spec-compliant) and the base64url alphabet
+# (so always safe in URLs and form bodies without escaping).
+PKCE_VERIFIER_ALPHABET = string.ascii_letters + string.digits + "-_"  # 64 chars
+PKCE_UNRESERVED = PKCE_VERIFIER_ALPHABET   # backward-compat name retained
 PKCE_VERIFIER_LENGTH = 64  # within RFC's 43-128 range
 
 
 def _generate_pkce() -> tuple[str, str]:
-    """Generate a TikTok-strict PKCE pair per RFC 7636.
+    """Generate a TikTok-strict PKCE pair.
 
     Returns (code_verifier, code_challenge).
 
-    Spec we're targeting (per TikTok's docs + RFC 7636 §4):
+    Spec we're targeting:
       - verifier:  exactly PKCE_VERIFIER_LENGTH (64) chars from the
-                   unreserved set [A-Z a-z 0-9 - . _ ~]
+                   base64url-strict alphabet [A-Z a-z 0-9 - _]
+                   (RFC 7636 allows `. ~` too; TikTok rejects those)
       - challenge: BASE64URL(SHA256(ASCII(verifier))), all `=` padding stripped
 
     Both values are PRINTED in run_oauth for manual verification — see the
     `openssl dgst -sha256` recipe printed alongside.
     """
-    verifier = "".join(secrets.choice(PKCE_UNRESERVED) for _ in range(PKCE_VERIFIER_LENGTH))
+    verifier = "".join(secrets.choice(PKCE_VERIFIER_ALPHABET) for _ in range(PKCE_VERIFIER_LENGTH))
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return verifier, challenge
