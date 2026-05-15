@@ -1,53 +1,53 @@
 #!/usr/bin/env python3
-"""Manual TikTok token exchange — no OAuth helper, no PKCE, no local server.
+"""Manual + auto TikTok token exchange — no PKCE.
 
-Use this when tiktok_oauth.py keeps failing on app-config edge cases.
-This script does ONE thing: take an authorization code as a CLI arg, POST
-to TikTok's token endpoint with just client_key + client_secret, and
-write the result to .env.
+This is the no-PKCE fallback for when tiktok_oauth.py's PKCE flow keeps
+failing due to TikTok app-config edge cases. Identical confidential-client
+flow (client_secret only, no code_verifier / code_challenge), with two
+modes for getting the authorization code:
 
-Step-by-step:
+  AUTO-CAPTURE MODE  (recommended if you can run a local server)
+    python get_token.py <account_handle>            # production
+    python get_token.py <account_handle> --sandbox  # sandbox
 
-  1. Visit the authorize URL printed by `python get_token.py` (no args).
-     Sign in as the target TikTok account, click Authorize.
+    Opens the TikTok authorize page in your default browser, captures
+    the redirect to http://localhost:8080/callback automatically. Same
+    UX as tiktok_oauth.py, just without PKCE.
 
-  2. TikTok redirects to http://localhost:8080/callback?code=<LONG_CODE>&state=test123.
-     The browser will show "site can't be reached" because there's no
-     local server running this time — that's expected. The code is in
-     the URL bar; copy it.
+  MANUAL-PASTE MODE  (use when you can't bind port 8080 / SSH session etc)
+    python get_token.py <account_handle> <code>            # production
+    python get_token.py <account_handle> <code> --sandbox  # sandbox
 
-  3. Run:
-        python get_token.py <account_handle> <paste_code_here>
+    You visit the authorize URL yourself, copy the `code` from the
+    failed redirect URL bar, paste it as the second argument. Tolerates
+    either the bare code OR the full callback URL.
 
-     You can also paste the FULL callback URL — the script extracts
-     `code` for you. So this works too:
-        python get_token.py sharpguylab 'http://localhost:8080/callback?code=xyz&state=test123'
+In either mode, --sandbox switches to the sandbox client_key/secret AND
+writes tokens to TIKTOK_SANDBOX_SESSION_<HANDLE> etc. so production
+tokens are never touched.
 
-  4. The script POSTs to /v2/oauth/token/ with these form fields:
-        client_key
-        client_secret
-        code
-        grant_type=authorization_code
-        redirect_uri=http://localhost:8080/callback
-     No code_verifier. No code_challenge. No PKCE.
+PREREQUISITES on the TikTok dev console:
+  - http://localhost:8080/callback in the allowed redirect URIs
+  - Content Posting API + Login Kit products enabled
+  - user.info.basic, video.upload, video.publish scopes approved
+  - For the production app: PKCE Required toggle should be OFF (this
+    script sends no PKCE; if PKCE is required, switch to tiktok_oauth.py)
 
-  5. Writes TIKTOK_SESSION_<HANDLE>, TIKTOK_BUSINESS_ID_<HANDLE>, and
-     TIKTOK_REFRESH_TOKEN_<HANDLE> to .env. Atomic + post-write verified.
-
-If TikTok still rejects this, the issue isn't PKCE or the verifier — it's
-the TikTok dev console app configuration. Check:
-  - Is the app set to "Confidential Client" / "Web App"?
-  - Is there a "PKCE Required" toggle? (Try toggling it off explicitly.)
-  - Is http://localhost:8080/callback in the allowed redirect URIs?
-  - Are user.info.basic + video.upload + video.publish all approved?
+If TikTok still rejects the response with no usable access_token, see
+the printed "common causes" checklist for app-config knobs to inspect.
 """
 
 from __future__ import annotations
 
+import http.server
 import json as _json
 import os
+import secrets
+import socketserver
 import sys
+import threading
 import urllib.parse
+import webbrowser
 from pathlib import Path
 from typing import Any
 
@@ -58,15 +58,23 @@ from dotenv import load_dotenv
 # silently shadow the real .env value.
 load_dotenv(override=True)
 
+# Production credentials.
 CLIENT_KEY = os.environ.get("TIKTOK_CLIENT_KEY", "").strip()
 CLIENT_SECRET = os.environ.get("TIKTOK_CLIENT_SECRET", "").strip()
+
+# Sandbox credentials (parallel app, sb-prefixed client_key).
+SANDBOX_CLIENT_KEY = os.environ.get("TIKTOK_SANDBOX_CLIENT_KEY", "").strip()
+SANDBOX_CLIENT_SECRET = os.environ.get("TIKTOK_SANDBOX_CLIENT_SECRET", "").strip()
+
 REDIRECT_URI = "http://localhost:8080/callback"
+CALLBACK_PORT = 8080
 SCOPES = "user.info.basic,video.upload,video.publish"
-STATE = "test123"  # fixed because manual flow has no CSRF surface
+STATE = "test123"  # fixed; CSRF surface in a single-user terminal flow is nil
 
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 AUTHORIZE_URL = "https://www.tiktok.com/v2/auth/authorize/"
 ENV_PATH = Path(__file__).parent / ".env"
+CALLBACK_TIMEOUT_SECONDS = 240
 
 ACCOUNT_ENV_MAP: dict[str, dict[str, str]] = {
     "sharpguylab": {
@@ -86,8 +94,21 @@ ACCOUNT_ENV_MAP: dict[str, dict[str, str]] = {
     },
 }
 
+# Generated programmatically from the prod map so adding an account is
+# a one-place edit.
+SANDBOX_ACCOUNT_ENV_MAP: dict[str, dict[str, str]] = {
+    handle: {role: key.replace("TIKTOK_", "TIKTOK_SANDBOX_", 1) for role, key in keys.items()}
+    for handle, keys in ACCOUNT_ENV_MAP.items()
+}
 
-# ── Helpers ────────────────────────────────────────────────────────────────
+# Captured by the callback handler in the server thread; consumed by main.
+_captured: dict[str, Any] = {
+    "code": None, "state": None, "error": None, "error_description": None,
+}
+_done = threading.Event()
+
+
+# ── Redaction + display helpers ────────────────────────────────────────────
 
 def _redact(value: Any) -> str:
     if value is None:
@@ -110,9 +131,11 @@ def _redact_body(node: Any) -> Any:
     return node
 
 
-def _build_authorize_url() -> str:
+# ── Auth + token endpoints ─────────────────────────────────────────────────
+
+def _build_authorize_url(client_key: str) -> str:
     qs = urllib.parse.urlencode({
-        "client_key": CLIENT_KEY,
+        "client_key": client_key,
         "scope": SCOPES,
         "response_type": "code",
         "redirect_uri": REDIRECT_URI,
@@ -133,6 +156,177 @@ def _extract_code(pasted: str) -> str:
     return pasted
 
 
+def _exchange_code(code: str, *, client_key: str, client_secret: str) -> dict[str, Any] | None:
+    """POST to /v2/oauth/token/ with no PKCE. Returns the inner token dict
+    on success, None on failure (with a printed error explaining why).
+    """
+    print()
+    print(f"  POST {TOKEN_URL}")
+    print(f"    grant_type=authorization_code")
+    print(f"    client_key={client_key[:6]}...  (key preview)")
+    print(f"    code={code[:8]}...  (length {len(code)})")
+    print(f"    redirect_uri={REDIRECT_URI}")
+    print(f"    (no PKCE — confidential-client flow with client_secret only)")
+    print()
+
+    try:
+        r = requests.post(
+            TOKEN_URL,
+            data={
+                "client_key": client_key,
+                "client_secret": client_secret,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": REDIRECT_URI,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15,
+        )
+    except requests.RequestException as e:
+        print(f"✗ Network error: {e}")
+        return None
+
+    print(f"  ↳ HTTP {r.status_code}  ·  content-type: {r.headers.get('Content-Type', '?')}")
+    try:
+        body = r.json()
+    except ValueError:
+        print(f"  ↳ raw (non-JSON): {r.text[:500]}")
+        return None
+
+    redacted = _json.dumps(_redact_body(body), indent=2)
+    for line in redacted.splitlines():
+        print(f"  ↳ {line}")
+
+    if r.status_code >= 400:
+        print(f"\n✗ Token exchange failed at HTTP layer: {r.status_code}")
+        return None
+
+    # Two possible response shapes — pick whichever has a non-empty access_token.
+    candidates: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(body.get("data"), dict):
+        candidates.append(("body['data']", body["data"]))
+    candidates.append(("body (top-level)", body))
+
+    for label, c in candidates:
+        if c and isinstance(c.get("access_token"), str) and c["access_token"].strip():
+            print(f"  ↳ extracted tokens from {label}")
+            return c
+
+    err = body.get("error") or (body.get("data") or {}).get("error")
+    desc = (
+        body.get("error_description")
+        or (body.get("data") or {}).get("error_description")
+        or (body.get("data") or {}).get("description")
+    )
+    print("\n✗ Response had no usable access_token.")
+    if err:
+        print(f"  TikTok error:       {err}")
+    if desc:
+        print(f"  TikTok description: {desc}")
+    log_id = body.get("log_id") or (body.get("data") or {}).get("log_id")
+    if log_id:
+        print(f"  log_id:             {log_id}")
+    print()
+    print("  At this point the bug is on TikTok's side, not the script's.")
+    print("  Check the dev console for:")
+    print("    1. 'Confidential Client' / 'Web App' client type")
+    print("    2. PKCE toggle — try DISABLING it explicitly")
+    print("    3. http://localhost:8080/callback in allowed redirect URIs")
+    print("    4. user.info.basic + video.upload + video.publish scopes approved")
+    return None
+
+
+# ── Local callback server (auto-capture mode) ──────────────────────────────
+
+class _CallbackHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path != "/callback":
+            self.send_response(404)
+            self.end_headers()
+            return
+        params = urllib.parse.parse_qs(parsed.query)
+        _captured["code"] = (params.get("code") or [None])[0]
+        _captured["state"] = (params.get("state") or [None])[0]
+        _captured["error"] = (params.get("error") or [None])[0]
+        _captured["error_description"] = (params.get("error_description") or [None])[0]
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        if _captured["error"]:
+            html = (
+                "<!doctype html><html><body style='font-family:sans-serif;"
+                "background:#0d1117;color:#e6edf3;padding:40px;text-align:center'>"
+                f"<h1 style='color:#f85149'>✗ OAuth error: {_captured['error']}</h1>"
+                f"<p>{_captured['error_description'] or ''}</p>"
+                "<p style='color:#8b949e'>Return to the terminal — script will exit shortly.</p>"
+                "</body></html>"
+            )
+        else:
+            html = (
+                "<!doctype html><html><body style='font-family:sans-serif;"
+                "background:#0d1117;color:#e6edf3;padding:40px;text-align:center'>"
+                "<h1 style='color:#3fb950'>✓ Authorization received</h1>"
+                "<p>Token exchange running in your terminal. You can close this tab.</p>"
+                "</body></html>"
+            )
+        self.wfile.write(html.encode("utf-8"))
+        _done.set()
+
+    def log_message(self, fmt, *args) -> None:  # silence default request log
+        pass
+
+
+def _capture_code_via_browser(client_key: str) -> str | None:
+    """Auto-capture mode: bind localhost:8080, open browser, wait for the
+    TikTok redirect. Returns the code on success, None on timeout / error.
+    """
+    # Reset captured state in case this is the second auto-capture in one
+    # process (shouldn't happen with main(), but be defensive).
+    _captured.update({"code": None, "state": None, "error": None, "error_description": None})
+    _done.clear()
+
+    socketserver.TCPServer.allow_reuse_address = True
+    try:
+        server = socketserver.TCPServer(("localhost", CALLBACK_PORT), _CallbackHandler)
+    except OSError as e:
+        print(f"✗ Could not bind localhost:{CALLBACK_PORT}: {e}")
+        print(f"  Kill whatever owns the port: lsof -ti:{CALLBACK_PORT} | xargs kill")
+        return None
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    auth_url = _build_authorize_url(client_key)
+    print(f"  Opening browser to TikTok's authorize page...")
+    print()
+    print(f"  If the browser doesn't open, paste this manually:")
+    print(f"    {auth_url}")
+    print()
+    webbrowser.open(auth_url)
+
+    print(f"  Waiting for callback at {REDIRECT_URI} ...")
+    print(f"  (timeout: {CALLBACK_TIMEOUT_SECONDS // 60} minutes — sign in + click Authorize)")
+    completed = _done.wait(timeout=CALLBACK_TIMEOUT_SECONDS)
+    server.shutdown()
+
+    if not completed:
+        print(f"\n✗ OAuth timed out — no callback received within "
+              f"{CALLBACK_TIMEOUT_SECONDS // 60} minutes.")
+        return None
+    if _captured["error"]:
+        print(f"\n✗ OAuth error from TikTok: {_captured['error']}")
+        if _captured["error_description"]:
+            print(f"  description: {_captured['error_description']}")
+        return None
+    code = _captured["code"]
+    if not code:
+        print("\n✗ No authorization code received from TikTok")
+        return None
+    return code
+
+
+# ── .env write (atomic + post-write verify) ────────────────────────────────
+
 def _read_env_keys(keys: set[str]) -> dict[str, str]:
     if not ENV_PATH.exists():
         return {}
@@ -150,8 +344,9 @@ def _read_env_keys(keys: set[str]) -> dict[str, str]:
 
 def _write_env(
     account_handle: str, access_token: str, open_id: str, refresh_token: str,
+    *, env_map: dict[str, dict[str, str]],
 ) -> tuple[str, str, str]:
-    keys = ACCOUNT_ENV_MAP[account_handle]
+    keys = env_map[account_handle]
     session_key = keys["session"]
     business_id_key = keys["business_id"]
     refresh_key = keys["refresh"]
@@ -162,8 +357,7 @@ def _write_env(
     if not open_id:
         print(f"\n⚠ open_id is empty — {business_id_key} will be empty")
     if not refresh_token:
-        print(f"\n⚠ refresh_token is empty — {refresh_key} will be empty "
-              f"(no refresh helper possible; re-run get_token.py every 24h)")
+        print(f"\n⚠ refresh_token is empty — {refresh_key} will be empty")
 
     print()
     print(f"  writing to {ENV_PATH}:")
@@ -204,7 +398,6 @@ def _write_env(
     tmp_path.write_text("".join(new_lines), encoding="utf-8")
     os.replace(tmp_path, ENV_PATH)
 
-    # Post-write verify
     re_read = _read_env_keys({session_key, business_id_key, refresh_key})
     expected = {
         session_key: access_token,
@@ -222,141 +415,95 @@ def _write_env(
     return session_key, business_id_key, refresh_key
 
 
-# ── Main flow ──────────────────────────────────────────────────────────────
+# ── Usage + main ──────────────────────────────────────────────────────────
 
-def print_usage_and_url() -> None:
-    print("Usage: python get_token.py <account_handle> <auth_code>")
+def _print_usage(client_key: str, env_label: str) -> None:
+    print("Usage:")
+    print("  python get_token.py <handle>                  # auto-capture (production)")
+    print("  python get_token.py <handle> --sandbox        # auto-capture (sandbox)")
+    print("  python get_token.py <handle> <code>           # manual paste (production)")
+    print("  python get_token.py <handle> <code> --sandbox # manual paste (sandbox)")
     print()
     print(f"  Valid handles: {', '.join(ACCOUNT_ENV_MAP)}")
     print()
-    if not CLIENT_KEY or not CLIENT_SECRET:
-        print("✗ TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET not set in .env")
-        return
-    print("To get an authorization code, open this URL in any browser,")
-    print("sign in as the target TikTok account, click Authorize, then")
-    print("copy the `code` parameter from the URL the browser tries to")
-    print("redirect to (it'll fail to load — that's fine):")
-    print()
-    print(f"  {_build_authorize_url()}")
-    print()
-    print("Then run:")
-    print("  python get_token.py sharpguylab <paste_code>")
-    print()
+    if client_key:
+        print(f"To get an authorization code manually ({env_label} app), visit this URL,")
+        print("sign in as the target TikTok account, click Authorize, then copy the")
+        print("`code` parameter from the URL the browser tries to redirect to:")
+        print()
+        print(f"  {_build_authorize_url(client_key)}")
+        print()
 
 
 def main() -> None:
-    if len(sys.argv) < 3:
-        print_usage_and_url()
+    # Strip --sandbox out of positional args.
+    sandbox = "--sandbox" in sys.argv[1:]
+    args = [a for a in sys.argv[1:] if a != "--sandbox"]
+
+    # Pick credential lane + target env map up front.
+    if sandbox:
+        client_key = SANDBOX_CLIENT_KEY
+        client_secret = SANDBOX_CLIENT_SECRET
+        env_map = SANDBOX_ACCOUNT_ENV_MAP
+        env_label = "SANDBOX"
+        missing_msg = "✗ TIKTOK_SANDBOX_CLIENT_KEY or TIKTOK_SANDBOX_CLIENT_SECRET is empty in .env"
+    else:
+        client_key = CLIENT_KEY
+        client_secret = CLIENT_SECRET
+        env_map = ACCOUNT_ENV_MAP
+        env_label = "PRODUCTION"
+        missing_msg = "✗ TIKTOK_CLIENT_KEY or TIKTOK_CLIENT_SECRET is empty in .env"
+
+    if len(args) < 1 or len(args) > 2:
+        _print_usage(client_key, env_label)
         sys.exit(2)
 
-    if not CLIENT_KEY or not CLIENT_SECRET:
-        print("✗ TIKTOK_CLIENT_KEY or TIKTOK_CLIENT_SECRET is empty in .env")
+    if not client_key or not client_secret:
+        print(missing_msg)
         sys.exit(1)
 
-    account = sys.argv[1].strip().lower()
-    raw_code = " ".join(sys.argv[2:])  # tolerate multi-arg paste if shell split on `&`
-
-    if account not in ACCOUNT_ENV_MAP:
+    account = args[0].strip().lower()
+    if account not in env_map:
         print(f"✗ Unknown account: {account!r}")
-        print(f"  Valid: {', '.join(ACCOUNT_ENV_MAP)}")
-        sys.exit(1)
-
-    code = _extract_code(raw_code)
-    if not code:
-        print("✗ Could not extract a code from the second argument.")
-        print(f"  Got: {raw_code[:80]!r}")
+        print(f"  Valid: {', '.join(env_map)}")
         sys.exit(1)
 
     print()
-    print(f"  account:      {account}")
-    print(f"  code:         {code[:12]}...  (length {len(code)})")
+    print(f"  get_token.py — @{account}  [{env_label}]")
+    print(f"  client_key:   {client_key[:6]}...")
     print(f"  redirect_uri: {REDIRECT_URI}")
-    print(f"  POST {TOKEN_URL}")
-    print(f"  (no PKCE — confidential-client flow with client_secret only)")
+    print(f"  scopes:       {SCOPES}")
     print()
 
-    try:
-        r = requests.post(
-            TOKEN_URL,
-            data={
-                "client_key": CLIENT_KEY,
-                "client_secret": CLIENT_SECRET,
-                "code": code,
-                "grant_type": "authorization_code",
-                "redirect_uri": REDIRECT_URI,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=15,
-        )
-    except requests.RequestException as e:
-        print(f"✗ Network error: {e}")
+    # Decide mode: 1 arg → auto-capture; 2 args → manual paste.
+    if len(args) == 1:
+        print("  mode: auto-capture (will open browser + listen on localhost:8080)")
+        code = _capture_code_via_browser(client_key)
+        if not code:
+            sys.exit(1)
+    else:
+        print("  mode: manual paste")
+        code = _extract_code(args[1])
+        if not code:
+            print("✗ Could not extract a code from the second argument.")
+            print(f"  Got: {args[1][:80]!r}")
+            sys.exit(1)
+
+    print(f"  ✓ have authorization code, exchanging...")
+    token_data = _exchange_code(code, client_key=client_key, client_secret=client_secret)
+    if token_data is None:
         sys.exit(1)
 
-    print(f"  ↳ HTTP {r.status_code}  ·  content-type: {r.headers.get('Content-Type', '?')}")
-    try:
-        body = r.json()
-    except ValueError:
-        print(f"  ↳ raw (non-JSON): {r.text[:500]}")
-        sys.exit(1)
+    access_token = token_data["access_token"]
+    open_id = token_data.get("open_id", "")
+    refresh_token = token_data.get("refresh_token", "")
 
-    redacted = _json.dumps(_redact_body(body), indent=2)
-    for line in redacted.splitlines():
-        print(f"  ↳ {line}")
+    _write_env(account, access_token, open_id, refresh_token, env_map=env_map)
 
-    if r.status_code >= 400:
-        print(f"\n✗ Token exchange failed at HTTP layer: {r.status_code}")
-        sys.exit(1)
-
-    # Look for tokens under both shapes (top-level OR under `data`).
-    # Pick whichever has a non-empty access_token (the bug we hit
-    # previously was settling for an empty token because the KEY was
-    # present in the wrong wrapping).
-    candidates: list[tuple[str, dict[str, Any]]] = []
-    if isinstance(body.get("data"), dict):
-        candidates.append(("body['data']", body["data"]))
-    candidates.append(("body (top-level)", body))
-
-    chosen: dict[str, Any] | None = None
-    for label, c in candidates:
-        if c and isinstance(c.get("access_token"), str) and c["access_token"].strip():
-            chosen = c
-            print(f"  ↳ extracted tokens from {label}")
-            break
-
-    if chosen is None:
-        err = body.get("error") or (body.get("data") or {}).get("error")
-        desc = (
-            body.get("error_description")
-            or (body.get("data") or {}).get("error_description")
-            or (body.get("data") or {}).get("description")
-        )
-        print("\n✗ Response had no usable access_token.")
-        if err:
-            print(f"  TikTok error:       {err}")
-        if desc:
-            print(f"  TikTok description: {desc}")
-        log_id = body.get("log_id") or (body.get("data") or {}).get("log_id")
-        if log_id:
-            print(f"  log_id:             {log_id}")
-        print()
-        print("  At this point the bug is on TikTok's side, not the script's.")
-        print("  Check the dev console for:")
-        print("    1. 'Confidential Client' / 'Web App' client type")
-        print("    2. PKCE toggle — try DISABLING it explicitly")
-        print("    3. http://localhost:8080/callback in allowed redirect URIs")
-        print("    4. user.info.basic + video.upload + video.publish scopes approved")
-        sys.exit(1)
-
-    access_token = chosen["access_token"]
-    open_id = chosen.get("open_id", "")
-    refresh_token = chosen.get("refresh_token", "")
-
-    _write_env(account, access_token, open_id, refresh_token)
-
-    expires_in = int(chosen.get("expires_in") or 0)
-    refresh_expires_in = int(chosen.get("refresh_expires_in") or 0)
+    expires_in = int(token_data.get("expires_in") or 0)
+    refresh_expires_in = int(token_data.get("refresh_expires_in") or 0)
     print()
-    print(f"  ✓ @{account} authorized.")
+    print(f"  ✓ @{account} authorized [{env_label}].")
     print(f"  ⏰ access_token expires in:  {expires_in // 3600}h {(expires_in % 3600) // 60}m")
     print(f"  ⏰ refresh_token expires in: {refresh_expires_in // 86400}d")
     print()
